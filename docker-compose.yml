@@ -1,0 +1,51 @@
+services:
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    image: maths-test-web:latest
+    container_name: maths-test-web
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      LUA_AGENT_ID: ${LUA_AGENT_ID}
+      LUA_API_KEY: ${LUA_API_KEY}
+      LUA_API_URL: ${LUA_API_URL:-https://api.heylua.ai}
+      LUA_CHANNEL: ${LUA_CHANNEL:-web}
+    expose:
+      - "3000"
+    networks:
+      - web
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: maths-test-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+    networks:
+      - web
+
+networks:
+  web:
+    driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:

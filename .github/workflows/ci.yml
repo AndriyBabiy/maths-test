@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  agent:
+    name: lua-agent (typecheck + tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Typecheck core
+        run: pnpm --filter @maths-diag/core run build
+
+      - name: Build agent
+        run: pnpm --filter lua-agent run build
+
+      - name: Test agent
+        run: pnpm --filter lua-agent run test
+
+  web:
+    name: web (typecheck + build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Typecheck web
+        run: pnpm --filter web run typecheck
+
+      - name: Build web
+        run: pnpm --filter web run build
+        env:
+          LUA_AGENT_ID: placeholder
+          LUA_API_KEY: placeholder
+
+  # No deploy job — production deploys are run manually from a laptop via
+  # scripts/deploy.sh. Keeps the SSH key out of GitHub Actions and prevents
+  # a green CI run from auto-rolling a regression onto prod.

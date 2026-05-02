@@ -1,0 +1,9 @@
+agent:
+  agentId: baseAgent_9bcf5ae8-9fd1-4713-915a-27d97bdd8cf0
+  orgId: 82a8ebf6-dddd-4c5c-b218-2afbf126cc2d
+skills: []
+webhooks: []
+jobs: []
+preprocessors: []
+postprocessors: []
+mcpServers: []
