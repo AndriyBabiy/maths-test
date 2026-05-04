@@ -60,6 +60,17 @@ function pillStyle(tone: PillTone) {
   }
 }
 
+function previewText(s: string): string {
+  return s
+    .replace(/\$([^$]+)\$/g, '$1')
+    .replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, '$1/$2')
+    .replace(/\\sqrt\{([^}]+)\}/g, '√$1')
+    .replace(/\\,/g, ' ')
+    .replace(/\\text\{([^}]+)\}/g, '$1')
+    .replace(/\^\\circ/g, '°')
+    .replace(/\\times/g, '×');
+}
+
 export function ContentsSidebar({
   items,
   activeId,
@@ -387,10 +398,11 @@ export function ContentsSidebar({
                       );
                     }
 
+                    const cleanPrompt = previewText(q.prompt);
                     const promptText =
-                      q.prompt.length > 40
-                        ? `${q.prompt.slice(0, 40)}…`
-                        : q.prompt;
+                      cleanPrompt.length > 40
+                        ? `${cleanPrompt.slice(0, 40)}…`
+                        : cleanPrompt;
 
                     let buttonBg: string = 'transparent';
                     let buttonColor: string = color.ink.secondary;

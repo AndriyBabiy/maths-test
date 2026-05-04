@@ -59,11 +59,19 @@ export type AssessmentResponse =
   | {
       kind: 'next_item';
       item: PublicItem;
-      progress: { asked: number; cap: number; commentary: string };
+      progress: {
+        asked: number;
+        cap: number;
+        commentary: string;
+        /** Whether the previous answer was correct. `null` on `start` (no prior answer). */
+        lastCorrect: boolean | null;
+      };
     }
   | {
       kind: 'report';
       report: AssessmentReport;
       commentary: string;
+      /** Whether the final answer was correct. `null` when reached via `finalise` (no answer). */
+      lastCorrect: boolean | null;
     }
   | { kind: 'error'; message: string };

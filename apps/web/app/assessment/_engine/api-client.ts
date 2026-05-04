@@ -1,7 +1,7 @@
 /**
- * Thin client for `/api/assessment`. The route handler bridges to the deployed
- * Lua agent — see `app/api/assessment/route.ts` for the wire shape and the
- * `<lua-out>` envelope contract.
+ * Thin client for `/api/assessment`. The route handler delegates to the
+ * in-process LangGraph agent at `apps/web/app/api/assessment/_agent/` —
+ * see `app/api/assessment/route.ts` for the wire shape.
  *
  * Errors are mapped to a typed `{ kind: 'error' }` shape so callers can
  * pattern-match without `try/catch` plumbing.

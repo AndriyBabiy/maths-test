@@ -164,3 +164,71 @@ Inline pill: feedback bg + 1px feedback edge + feedback ink. `radius.pill`, `fon
 - [ ] Focus rings visible on Tab through any pane.
 - [ ] `pnpm typecheck` clean.
 - [ ] `pnpm build` produces all routes statically (`/`, `/assessment`, `/assessment/smoke`).
+- [ ] Test at 375 × 812 (mobile), 768 × 1024 (tablet), 1280 × 800 (desktop). No horizontal scroll on any.
+
+---
+
+## Responsive primitives (added in 2.1.0)
+
+> **Inspiration tag:** `responsive-utility-saas`
+> The desktop palette / typography / motion system is unchanged. We only ADD primitives so the same components can scale from a 375 px phone (Junior Cycle student on a school iPad) through 1440 px desktop (Leaving Cert revision on a laptop).
+
+### Breakpoints
+
+| Token | Min width | Use case |
+|-------|-----------|----------|
+| `sm` | **375 px** | iPhone / smallest supported phone — single-column stack |
+| `md` | **768 px** | iPad portrait — two-column (chat/workings stacked beside contents drawer) |
+| `lg` | **1024 px** | iPad landscape / small laptop — three-column desktop layout |
+| `xl` | **1280 px** | Full desktop — original 1280 × 800 stage scaled `min(vw/1280, vh/800, 2)` |
+
+Source of truth: `tokens.json → breakpoints` and `apps/web/app/assessment/_engine/tokens.ts → breakpoints`.
+
+### Media-query helpers
+
+`media.{sm,md,lg,xl}` are min-width queries. `media.touch` matches coarse pointers (phones, tablets), `media.pointer` matches fine pointers (mouse/trackpad), `media.reducedMotion` honors user preference.
+
+### Touch targets
+
+| Token | Min size | Rule |
+|-------|---------|------|
+| `tap.touch` | **44 px** | All interactive elements (buttons, choice rows, sidebar items) when `media.touch` matches. WCAG 2.5.5 AA. |
+| `tap.pointer` | **32 px** | Same elements when `media.pointer` matches — keeps the desktop layout dense. |
+
+The Button primitive must read these instead of hard-coding `38px`.
+
+### Fluid type scale
+
+`fontSizeFluid.*` mirrors every key in the static `fontSize.*` ramp but uses `clamp(min, preferred, max)` so type breathes between breakpoints **without media queries**. Mobile floors are intentionally close to the desktop value (only 1–2 px smaller) so legibility never degrades — body text floors at **13 px**, never below.
+
+Example: `fontSize.body` (14) ↔ `fontSizeFluid.body` ('clamp(13px, 0.8125rem + 0.15vw, 16px)').
+
+Use the static ramp where you need a numeric value (canvas drawing, inline styles that need pixel math). Use the fluid ramp on every text node in the chrome.
+
+### Fluid spacing
+
+`spaceFluid.*` is a parallel string-valued counterpart to `space.*` numeric ramp. Same keys (0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 16) but each value is a `clamp()` so paddings and gaps grow gently with the viewport instead of needing media queries.
+
+Use it on layout containers (panes, hero sections, top bar). The numeric `space` ramp is still appropriate inside compact components.
+
+### Container widths
+
+`containerWidth.{sm,md,lg,xl,xxl}` define `max-width` ceilings for content blocks. Hero / landing content should cap at `xl` (1200 px); marketing-style copy at `lg` (960 px).
+
+### Responsive layout rules
+
+| Breakpoint | Stage layout |
+|------------|--------------|
+| **< md** (mobile) | Single column · top bar collapses to icon row · question + choices stack above workings · chat opens as bottom-sheet drawer · contents drawer is icon-only or slide-over |
+| **md – lg** (tablet) | Two columns · contents drawer collapses to a fixed left rail (~64 px) · main pad stacks chat above workings (`1fr 1.4fr` becomes `1fr 1fr` vertically) |
+| **≥ lg** (desktop) | Three columns · `264px 1fr 1.4fr` (current desktop layout, unchanged) |
+
+Below md, **stop scaling the 1280 × 800 art-board**: switch to `width: 100%; min-height: 100dvh` so panes get normal scroll surfaces. Maintaining the scale-fit on a 375-px screen renders text at ~4 px which is unusable.
+
+### Anti-patterns (added)
+
+9. ❌ Hard-coded pixel widths on container elements. Use `containerWidth.*` or percentage / fr.
+10. ❌ Touch targets < 44 px on coarse-pointer devices. Always read from `tap.touch`.
+11. ❌ Body text below 13 px on any viewport. Use `fontSizeFluid.body` minimum.
+12. ❌ Stage scaling below 768 px width. Switch to flow layout.
+13. ❌ Horizontal scroll on mobile. Test at 375 × 812 — no x-overflow.

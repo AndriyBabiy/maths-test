@@ -4,43 +4,12 @@ import { SECTION_META } from './content';
 import type { AssessResult, Mood, Question, Section } from './types';
 
 /**
- * Heuristic correctness inference from the agent's natural-language commentary.
- *
- * The deployed agent emits a `next_item` envelope but doesn't include an
- * explicit `lastCorrect` flag — its feedback lives in the commentary string.
- * We pattern-match on common encouragement / correction keywords so the UI
- * can colour the previous question with a tick or cross. If the agent's
- * commentary doesn't tip its hand, we leave `correct` as `null` and the
- * sidebar shows a neutral "done" marker.
- *
- * Future work: extend the envelope contract with `lastCorrect: boolean` so
- * this becomes deterministic. Heuristic is the demo-day pragmatic choice.
+ * Correctness comes from the server envelope's `lastCorrect: boolean | null`
+ * field — the agent computes `item.correctIndex === chosenIndex` server-side
+ * and forwards that boolean. `null` means no answer was scored on this turn
+ * (e.g. the `start` envelope or a `finalise` that wasn't preceded by an
+ * answer in the same call), in which case the sidebar shows a neutral marker.
  */
-const POSITIVE = [
-  /\bcorrect\b/i,
-  /\bnice\b/i,
-  /\bsharp\b/i,
-  /\bgreat\b/i,
-  /\bwell done\b/i,
-  /\bspot[- ]on\b/i,
-  /✓/,
-];
-const NEGATIVE = [
-  /\bnot quite\b/i,
-  /\bnot right\b/i,
-  /\bincorrect\b/i,
-  /\brecap\b/i,
-  /\btry again\b/i,
-  /\bclose\b/i,
-  /\blet's slow\b/i,
-  /✗/,
-];
-
-function inferCorrect(commentary: string): boolean | null {
-  if (POSITIVE.some((re) => re.test(commentary))) return true;
-  if (NEGATIVE.some((re) => re.test(commentary))) return false;
-  return null;
-}
 
 function moodFromCorrect(correct: boolean | null): Mood {
   if (correct === true) return 'good';
@@ -55,8 +24,8 @@ function ribbonFromCorrect(correct: boolean | null): string {
 }
 
 /**
- * Submit an answer to the deployed Lua agent and fold the response into the
- * wireframe's `Question[]` state.
+ * Submit an answer to the in-process LangGraph agent and fold the response
+ * into the wireframe's `Question[]` state.
  *
  * Side effects (encoded in the returned `items` array, not in the original):
  *  - Marks the active question `done`, stamps `userAnswer` + `chosenIndex` +
@@ -130,7 +99,7 @@ export async function assessAndAdapt(
   }
 
   if (response.kind === 'report') {
-    const correct = inferCorrect(response.commentary);
+    const correct = response.lastCorrect;
     q.correct = correct;
     return {
       items: next,
@@ -145,7 +114,7 @@ export async function assessAndAdapt(
   }
 
   // kind === 'next_item' — fold the new item in as `now`.
-  const correct = inferCorrect(response.progress.commentary);
+  const correct = response.progress.lastCorrect;
   q.correct = correct;
 
   const newQ = publicItemToQuestion(response.item, 'now');

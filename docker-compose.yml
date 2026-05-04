@@ -1,3 +1,12 @@
+# Compose stack for maths-test.andriybabiy.com.
+#
+# This box already runs a host-level nginx fronting :80/:443 for every
+# *.andriybabiy.com tenant (studyie, movie-generator, teamwork-board, …).
+# So we DO NOT publish 80/443 here — instead we bind the Next.js app to
+# 127.0.0.1:3000 and let the host nginx proxy to it. TLS uses the shared
+# Cloudflare Origin Cert at /etc/nginx/andriybabiy-origin.{pem,key} (15-year
+# validity, no certbot). See apps/web/deploy/nginx/ for the matching vhost.
+
 services:
   web:
     build:
@@ -8,44 +17,16 @@ services:
     restart: unless-stopped
     environment:
       NODE_ENV: production
-      LUA_AGENT_ID: ${LUA_AGENT_ID}
-      LUA_API_KEY: ${LUA_API_KEY}
-      LUA_API_URL: ${LUA_API_URL:-https://api.heylua.ai}
-      LUA_CHANNEL: ${LUA_CHANNEL:-web}
-    expose:
-      - "3000"
-    networks:
-      - web
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-anthropic/claude-haiku-4.5}
+    # Bound to loopback only — host nginx is the public front door. Same
+    # pattern as studyie-frontend (8081), portfolio (8090), affine (8093),
+    # movie-generator (8095). 3000 is taken by studyie-grafana, so we use 8088.
+    ports:
+      - "127.0.0.1:8088:3000"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 30s
-
-  caddy:
-    image: caddy:2-alpine
-    container_name: maths-test-caddy
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    environment:
-      DOMAIN: ${DOMAIN}
-      ACME_EMAIL: ${ACME_EMAIL}
-    volumes:
-      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      - web
-    networks:
-      - web
-
-networks:
-  web:
-    driver: bridge
-
-volumes:
-  caddy_data:
-  caddy_config:

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RaschEngine, K_FACTOR } from '../src/rasch-engine';
+import { ITEMS } from '../src/items';
 import type { Item, SessionState, Strand } from '../src/types';
 
 const STRANDS: Strand[] = [
@@ -134,12 +135,32 @@ describe('RaschEngine.pickItem', () => {
     expect(picked!.b).toBe(1);
   });
 
-  it('returns null when no anchor is within ±0.5', () => {
+  it('returns closest item even outside the legacy ±0.5 tolerance', () => {
     const engine = new RaschEngine();
-    const state = freshState();
-    const items: Item[] = [-2, 2].map((b, i) =>
-      makeItem({ id: `i${i}`, strand: 'algebra', b }),
-    );
+    // theta=2.0; candidates at b=0 and b=-3 — the closest (b=0) is still
+    // 1.0 away from theta, well outside the legacy ±0.5 window.
+    const state = freshState({ theta: { ...freshState().theta, algebra: 2.0 } });
+    const items: Item[] = [
+      makeItem({ id: 'far-low', strand: 'algebra', b: -3 }),
+      makeItem({ id: 'closest', strand: 'algebra', b: 0 }),
+    ];
+    const picked = engine.pickItem(items, state, 'algebra');
+    expect(picked).not.toBeNull();
+    expect(picked!.id).toBe('closest');
+    expect(Math.abs(picked!.b - state.theta.algebra)).toBeGreaterThan(0.5);
+  });
+
+  it('returns null only when no in-strand candidate exists at all', () => {
+    const engine = new RaschEngine();
+    // All candidates are either in another strand or already asked, so no
+    // in-strand+stage+unasked candidate exists for 'algebra'.
+    const itemsAsked = new Set<string>(['asked-algebra']);
+    const state = freshState({ itemsAsked });
+    const items: Item[] = [
+      makeItem({ id: 'asked-algebra', strand: 'algebra', b: 0 }),
+      makeItem({ id: 'other-1', strand: 'number', b: 0 }),
+      makeItem({ id: 'other-2', strand: 'geometry_trig', b: 0 }),
+    ];
     const picked = engine.pickItem(items, state, 'algebra');
     expect(picked).toBeNull();
   });
@@ -185,6 +206,102 @@ describe('RaschEngine.pickItem', () => {
   });
 });
 
+describe('RaschEngine.streakBoost', () => {
+  it('returns 0 with no history', () => {
+    const engine = new RaschEngine();
+    expect(engine.streakBoost([], 'algebra', [])).toBe(0);
+  });
+
+  it('returns +1.5 for a 3-correct streak in the same strand', () => {
+    const engine = new RaschEngine();
+    const items = [
+      makeItem({ id: 'a1', strand: 'algebra', b: 0 }),
+      makeItem({ id: 'a2', strand: 'algebra', b: 0 }),
+      makeItem({ id: 'a3', strand: 'algebra', b: 0 }),
+    ];
+    const history: SessionState['history'] = [
+      { itemId: 'a1', correct: true, latencyMs: 0 },
+      { itemId: 'a2', correct: true, latencyMs: 0 },
+      { itemId: 'a3', correct: true, latencyMs: 0 },
+    ];
+    expect(engine.streakBoost(history, 'algebra', items)).toBeCloseTo(1.5);
+  });
+
+  it('returns -1.0 for a 2-incorrect streak', () => {
+    const engine = new RaschEngine();
+    const items = [
+      makeItem({ id: 'a1', strand: 'algebra', b: 0 }),
+      makeItem({ id: 'a2', strand: 'algebra', b: 0 }),
+    ];
+    const history: SessionState['history'] = [
+      { itemId: 'a1', correct: false, latencyMs: 0 },
+      { itemId: 'a2', correct: false, latencyMs: 0 },
+    ];
+    expect(engine.streakBoost(history, 'algebra', items)).toBeCloseTo(-1.0);
+  });
+
+  it('caps the boost at ±1.8 even with longer streaks', () => {
+    const engine = new RaschEngine();
+    const items = Array.from({ length: 10 }, (_, i) =>
+      makeItem({ id: `a${i}`, strand: 'algebra', b: 0 }),
+    );
+    const history: SessionState['history'] = items.map((it) => ({
+      itemId: it.id,
+      correct: true,
+      latencyMs: 0,
+    }));
+    expect(engine.streakBoost(history, 'algebra', items)).toBe(1.8);
+  });
+
+  it('persists across strand boundaries (global momentum)', () => {
+    const engine = new RaschEngine();
+    const items = [
+      makeItem({ id: 'a1', strand: 'algebra', b: 0 }),
+      makeItem({ id: 'n1', strand: 'number', b: 0 }),
+    ];
+    const history: SessionState['history'] = [
+      { itemId: 'a1', correct: true, latencyMs: 0 },
+      { itemId: 'n1', correct: true, latencyMs: 0 },
+    ];
+    // Two correct in a row (mixed strands) → +1.0 in any strand. The
+    // strand-rotation picker breaks per-strand streaks by design, so the
+    // boost is intentionally strand-agnostic — see streakBoost docstring.
+    expect(engine.streakBoost(history, 'algebra', items)).toBeCloseTo(1.0);
+    expect(engine.streakBoost(history, 'number', items)).toBeCloseTo(1.0);
+  });
+
+  it('resets only when the result direction flips, not when strand changes', () => {
+    const engine = new RaschEngine();
+    const items = [
+      makeItem({ id: 'a1', strand: 'algebra', b: 0 }),
+      makeItem({ id: 'n1', strand: 'number', b: 0 }),
+      makeItem({ id: 'g1', strand: 'geometry_trig', b: 0 }),
+    ];
+    const history: SessionState['history'] = [
+      { itemId: 'a1', correct: true, latencyMs: 0 },
+      { itemId: 'n1', correct: false, latencyMs: 0 },
+      { itemId: 'g1', correct: false, latencyMs: 0 },
+    ];
+    // Trailing run is 2 incorrect → -1.0 (the leading 'correct' fences it off).
+    expect(engine.streakBoost(history, 'algebra', items)).toBeCloseTo(-1.0);
+  });
+
+  it('streakBoost shifts pickItem target toward harder items', () => {
+    const engine = new RaschEngine();
+    const items = [
+      makeItem({ id: 'easy', strand: 'algebra', b: -0.5 }),
+      makeItem({ id: 'mid', strand: 'algebra', b: 0.0 }),
+      makeItem({ id: 'hard', strand: 'algebra', b: 1.4 }),
+    ];
+    const state = freshState();
+    // Without boost, theta=0 picks 'mid'.
+    expect(engine.pickItem(items, state, 'algebra')!.id).toBe('mid');
+    // With +1.5 boost, target = 1.5 → picks 'hard'.
+    const boosted = engine.pickItem(items, state, 'algebra', { streakBoost: 1.5 });
+    expect(boosted!.id).toBe('hard');
+  });
+});
+
 describe('RaschEngine.tierFromTheta', () => {
   it('boundaries map correctly', () => {
     const engine = new RaschEngine();
@@ -197,17 +314,44 @@ describe('RaschEngine.tierFromTheta', () => {
 });
 
 describe('RaschEngine.recommend', () => {
-  it('finalises at 15 items regardless of SE', () => {
+  it('finalises at 20 items regardless of SE', () => {
     const engine = new RaschEngine();
     const itemsAsked = new Set<string>();
     const history: SessionState['history'] = [];
-    for (let i = 0; i < 15; i++) {
+    for (let i = 0; i < 20; i++) {
       itemsAsked.add(`i${i}`);
       history.push({ itemId: `i${i}`, correct: true, latencyMs: 0 });
     }
     // Keep all SEs high so the SE rule wouldn't fire on its own.
     const state = freshState({ itemsAsked, history });
     expect(engine.recommend(state, 'algebra')).toBe('finalise');
+  });
+
+  it('does not finalise at 19 items when SE is still high', () => {
+    const engine = new RaschEngine();
+    const itemsAsked = new Set<string>();
+    const history: SessionState['history'] = [];
+    for (let i = 0; i < 19; i++) {
+      itemsAsked.add(`i${i}`);
+      history.push({ itemId: `i${i}`, correct: true, latencyMs: 0 });
+    }
+    // All SEs at 1.0 (fresh state), so neither the count rule nor the SE
+    // rules should trip — just below the 20-item hard cap.
+    const state = freshState({ itemsAsked, history });
+    expect(engine.recommend(state, 'algebra')).toBe('continue');
+  });
+
+  it("returns 'switch_strand' at 19 items when the just-updated strand SE<0.4", () => {
+    const engine = new RaschEngine();
+    const itemsAsked = new Set<string>();
+    const history: SessionState['history'] = [];
+    for (let i = 0; i < 19; i++) {
+      itemsAsked.add(`i${i}`);
+      history.push({ itemId: `i${i}`, correct: true, latencyMs: 0 });
+    }
+    const state = freshState({ itemsAsked, history });
+    state.se.algebra = 0.3;
+    expect(engine.recommend(state, 'algebra')).toBe('switch_strand');
   });
 
   it("returns 'switch_strand' when only the just-updated strand has SE<0.4", () => {
@@ -231,5 +375,64 @@ describe('RaschEngine.recommend', () => {
     const engine = new RaschEngine();
     const state = freshState();
     expect(engine.recommend(state, 'algebra')).toBe('continue');
+  });
+});
+
+// End-to-end integration against the real ITEMS bank — proves the streak
+// machinery actually surfaces fundamentals + LC items, which is the user-
+// facing success criterion ("range from fundamentals to advanced LC").
+describe('streak progression — real ITEMS bank trajectory', () => {
+  const realItems = ITEMS as unknown as Item[];
+
+  function simulate(
+    correctness: boolean[],
+    strand: Strand,
+  ): { picked: Item; targetB: number }[] {
+    const engine = new RaschEngine();
+    let state = freshState();
+    const trajectory: { picked: Item; targetB: number }[] = [];
+    for (const isCorrect of correctness) {
+      const boost = engine.streakBoost(state.history, strand, realItems);
+      const picked = engine.pickItem(realItems, state, strand, { streakBoost: boost });
+      if (!picked) break;
+      trajectory.push({ picked, targetB: state.theta[strand] + boost });
+      state = engine.update(state, picked, isCorrect, 0);
+    }
+    return trajectory;
+  }
+
+  it('a hot streak in algebra reaches LC items (b ≥ 1.5) within 4 picks', () => {
+    const trajectory = simulate([true, true, true, true], 'algebra');
+    const maxB = Math.max(...trajectory.map((t) => t.picked.b));
+    expect(maxB).toBeGreaterThanOrEqual(1.5);
+  });
+
+  it('a cold streak in number reaches primary fundamentals (b ≤ -1) within 4 picks', () => {
+    const trajectory = simulate([false, false, false, false], 'number');
+    const minB = Math.min(...trajectory.map((t) => t.picked.b));
+    expect(minB).toBeLessThanOrEqual(-1);
+  });
+
+  it('no streak: theta=0 picks JC-range items (|b| ≤ 1)', () => {
+    const engine = new RaschEngine();
+    const state = freshState();
+    const picked = engine.pickItem(realItems, state, 'algebra');
+    expect(picked).not.toBeNull();
+    expect(Math.abs(picked!.b)).toBeLessThanOrEqual(1);
+  });
+
+  it('mixed run: 2 correct then 1 incorrect resets the boost', () => {
+    const engine = new RaschEngine();
+    let state = freshState();
+    // 2 correct → boost should be +1.0 on the 3rd pick.
+    state = engine.update(state, realItems.find((i) => i.strand === 'algebra' && i.b === 0)!, true, 0);
+    state = engine.update(state, realItems.find((i) => i.strand === 'algebra' && i.b > 0 && !state.itemsAsked.has(i.id))!, true, 0);
+    expect(engine.streakBoost(state.history, 'algebra', realItems)).toBeCloseTo(1.0);
+    // Now an incorrect → trailing streak becomes 1-incorrect, boost = -0.5.
+    const wrongPick = realItems.find(
+      (i) => i.strand === 'algebra' && !state.itemsAsked.has(i.id),
+    )!;
+    state = engine.update(state, wrongPick, false, 0);
+    expect(engine.streakBoost(state.history, 'algebra', realItems)).toBeCloseTo(-0.5);
   });
 });

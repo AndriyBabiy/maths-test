@@ -13,6 +13,7 @@ import {
 } from '../_engine/tokens';
 import type { ChatMessage, Mood } from '../_engine/types';
 import { SendGlyph } from './glyphs';
+import { MathText } from './MathText';
 import { ChatBubble, SketchBtn, Tutor } from './primitives';
 
 interface ChatPaneProps {
@@ -162,7 +163,7 @@ export function ChatPane({
               <ChatBubble
                 key={i}
                 who={m.who}
-                text={m.text}
+                text={<MathText source={m.text} />}
                 mood={m.mood}
                 small
                 showAuthor={showAuthor}

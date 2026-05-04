@@ -272,7 +272,7 @@ export const Button = SketchBtn;
 
 interface ChatBubbleProps {
   who: 'tutor' | 'you';
-  text: string;
+  text: ReactNode;
   small?: boolean;
   mood?: Mood;
   showAuthor?: boolean;

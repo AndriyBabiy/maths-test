@@ -136,3 +136,299 @@ a {
     scroll-behavior: auto !important;
   }
 }
+
+/* ─── Assessment stage — responsive grid ────────────────────────── */
+
+/* Outer shell: viewport-bound on tablet+, scrolling document on mobile.
+   Below md we let the page scroll naturally so chat + question + workings
+   can all be reached without fighting overflow inside fixed panes. */
+.mn-stage-shell {
+  background: var(--bg-canvas);
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+}
+
+@media (min-width: 768px) {
+  .mn-stage-shell {
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
+  }
+}
+
+.mn-stage {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-canvas);
+}
+
+/* Three-pane grid — adapts by viewport.
+   < md (default mobile): single column, panes stack vertically.
+   md – lg: two columns, sidebar rail spans both rows so chat sits
+            above workings on the right.
+   lg+: three columns (264 / 1fr / 1.4fr), the original desktop layout.
+*/
+.mn-stage-grid {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-rows: auto auto 1fr;
+  gap: 0;
+  min-height: 0;
+  position: relative;
+  background: var(--bg-canvas);
+}
+
+.mn-pane-sidebar {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.mn-pane-chat {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.mn-pane-workings {
+  grid-column: 1;
+  grid-row: 3;
+}
+
+@media (min-width: 768px) {
+  .mn-stage-grid {
+    grid-template-columns: 72px 1fr;
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1.6fr);
+  }
+
+  .mn-pane-sidebar {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+  }
+
+  .mn-pane-chat {
+    grid-column: 2;
+    grid-row: 1;
+    border-right: none;
+    border-bottom: 1px solid var(--border-default);
+  }
+
+  .mn-pane-workings {
+    grid-column: 2;
+    grid-row: 2;
+  }
+}
+
+@media (min-width: 1024px) {
+  .mn-stage-grid {
+    grid-template-columns: 264px 1fr 1.4fr;
+    grid-template-rows: 1fr;
+  }
+
+  .mn-pane-sidebar {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .mn-pane-chat {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .mn-pane-workings {
+    grid-column: 3;
+    grid-row: 1;
+  }
+}
+
+/* Sidebar — full-width drawer on mobile (slide-in), rail on tablet, full pane on desktop. */
+.mn-pane-sidebar {
+  background: var(--bg-surface);
+  min-height: 0;
+  position: relative;
+  border-right: 1px solid var(--border-default);
+  border-bottom: 1px solid var(--border-default);
+}
+
+@media (min-width: 768px) {
+  .mn-pane-sidebar {
+    border-bottom: none;
+  }
+}
+
+/* Chat pane: shows below the workings on mobile (collapsible),
+   appears as a column on tablet+. */
+.mn-pane-chat {
+  background: var(--bg-surface);
+  min-height: 0;
+  position: relative;
+  border-right: 1px solid var(--border-default);
+  border-bottom: 1px solid var(--border-default);
+  display: flex;
+  flex-direction: column;
+}
+
+@media (min-width: 768px) {
+  .mn-pane-chat {
+    border-bottom: none;
+  }
+}
+
+/* Workings pane: always visible, fills remaining height. */
+.mn-pane-workings {
+  background: var(--bg-surface);
+  min-height: 60vh;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+@media (min-width: 768px) {
+  .mn-pane-workings {
+    min-height: 0;
+  }
+}
+
+/* Mobile drawer toggle — only visible below md. */
+.mn-drawer-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  min-height: 44px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-primary);
+  cursor: pointer;
+  transition: background 120ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.mn-drawer-toggle:hover {
+  background: var(--bg-muted);
+}
+
+@media (min-width: 1024px) {
+  .mn-drawer-toggle {
+    display: none;
+  }
+}
+
+/* On mobile, the contents sidebar can be hidden behind a toggle
+   to free up vertical space for the question and workings. */
+.mn-pane-sidebar[data-hidden-mobile='true'] {
+  display: none;
+}
+
+@media (min-width: 768px) {
+  .mn-pane-sidebar[data-hidden-mobile='true'] {
+    display: block;
+  }
+}
+
+/* Top bar — wraps stat row beneath title on narrow screens. */
+.mn-topbar {
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-default);
+  gap: 12px;
+  flex-wrap: wrap;
+  min-height: 56px;
+}
+
+@media (min-width: 768px) {
+  .mn-topbar {
+    padding: 12px 24px;
+    flex-wrap: nowrap;
+  }
+}
+
+.mn-topbar-stats {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+@media (min-width: 480px) {
+  .mn-topbar-stats {
+    gap: 12px;
+    flex-wrap: nowrap;
+  }
+}
+
+@media (min-width: 768px) {
+  .mn-topbar-stats {
+    gap: 20px;
+  }
+}
+
+/* Hide the tagline (separator + tagline) on tight viewports. */
+.mn-topbar-tagline {
+  display: none;
+}
+
+@media (min-width: 1024px) {
+  .mn-topbar-tagline {
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+  }
+}
+
+/* Footer wraps on narrow screens. */
+.mn-footer {
+  padding: 8px 16px;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border-default);
+  color: var(--ink-soft);
+  font-size: 12px;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+@media (min-width: 768px) {
+  .mn-footer {
+    padding: 10px 24px;
+  }
+}
+
+/* Choice grid — 1 column on the smallest screens, 2 columns from sm up. */
+.mn-choice-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+@media (min-width: 480px) {
+  .mn-choice-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+}
+
+/* Touch-target enforcement on coarse pointers. */
+@media (hover: none) and (pointer: coarse) {
+  button,
+  [role='button'],
+  [role='radio'] {
+    min-height: 44px;
+  }
+}
+
+/* Prevent mid-formula wrapping inside KaTeX inline blocks. KaTeX renders
+   each formula as an inline-block; without this, narrow choice cards force
+   the formula to wrap mid-character and lose its visual identity. */
+.katex {
+  white-space: nowrap;
+}

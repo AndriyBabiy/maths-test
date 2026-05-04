@@ -4,8 +4,9 @@
 
 set -euo pipefail
 
-DEPLOY_HOST="${DEPLOY_HOST:-root@maths-test.andriybabiy.com}"
-DEPLOY_DIR="${DEPLOY_DIR:-/opt/maths-test}"
+DEPLOY_HOST="${DEPLOY_HOST:-deploy@78.47.89.101}"
+DEPLOY_KEY="${DEPLOY_KEY:-$HOME/.ssh/studyie_vps}"
+DEPLOY_DIR="${DEPLOY_DIR:-/home/deploy/maths-test}"
 DEPLOY_BRANCH="${DEPLOY_BRANCH:-main}"
 
 cd "$(dirname "$0")/.."
@@ -30,7 +31,7 @@ git push origin "$DEPLOY_BRANCH"
 LOCAL_SHA="$(git rev-parse --short HEAD)"
 echo "→ Deploying $LOCAL_SHA to $DEPLOY_HOST:$DEPLOY_DIR"
 
-ssh "$DEPLOY_HOST" bash -se <<EOF
+ssh -i "$DEPLOY_KEY" "$DEPLOY_HOST" bash -se <<EOF
 set -euo pipefail
 cd "$DEPLOY_DIR"
 
@@ -52,6 +53,6 @@ docker image prune -f >/dev/null
 EOF
 
 echo "→ Tailing logs (10s)"
-ssh "$DEPLOY_HOST" "cd '$DEPLOY_DIR' && timeout 10 docker compose logs --tail=20 -f web caddy || true"
+ssh -i "$DEPLOY_KEY" "$DEPLOY_HOST" "cd '$DEPLOY_DIR' && timeout 10 docker compose logs --tail=20 -f web || true"
 
 echo "✓ Deploy complete: https://maths-test.andriybabiy.com"

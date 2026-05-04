@@ -29,6 +29,7 @@ import {
   type PenCanvasHandle,
   PenCanvasAuto,
 } from './PenCanvas';
+import { MathText } from './MathText';
 import { FeedbackRibbon, SketchBox, SketchBtn } from './primitives';
 
 interface WorkingsPaneProps {
@@ -166,20 +167,16 @@ export function WorkingsPane({
             whiteSpace: 'pre-wrap',
           }}
         >
-          {activeQ.prompt}
+          <MathText source={activeQ.prompt} />
         </div>
       </SketchBox>
 
       {/* Multiple choice answers */}
       {choices ? (
         <div
+          className="mn-choice-grid"
           role="radiogroup"
           aria-label="Choose your answer"
-          style={{
-            display: 'grid',
-            gridTemplateColumns: '1fr 1fr',
-            gap: space[4],
-          }}
         >
           {choices.map((text, i) => {
             const idx = i as 0 | 1 | 2 | 3;
@@ -499,7 +496,7 @@ function ChoiceButton({
           whiteSpace: 'pre-wrap',
         }}
       >
-        {text}
+        <MathText source={text} />
       </span>
       {verdict === 'good' && (
         <TickGlyph size={18} ink={color.feedback.goodInk} />

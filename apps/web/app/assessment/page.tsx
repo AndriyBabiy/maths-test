@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AssessmentReport } from '@/app/api/assessment/types';
 import { ChatPane } from './_components/ChatPane';
 import { ContentsSidebar } from './_components/ContentsSidebar';
+import { StudyPlanWizard } from './_components/study-plan/StudyPlanWizard';
 import {
   ChartGlyph,
   ClockGlyph,
@@ -16,6 +17,7 @@ import { WorkingsPane } from './_components/WorkingsPane';
 import { assessAndAdapt } from './_engine/adapt';
 import { apiStart, publicItemToQuestion } from './_engine/api-client';
 import { buildInitialState } from './_engine/content';
+import { getProgressiveHint, type HintLevels } from './_engine/hints';
 import {
   color,
   font,
@@ -43,15 +45,13 @@ const INTRO_CHAT: ChatMessage[] = [
   },
 ];
 
+function isHintRequest(text: string): boolean {
+  const t = text.toLowerCase();
+  return t.includes('hint') || t.includes('stuck') || t.includes('help');
+}
+
 function stockReply(userText: string, activeQ: Question | null): string {
   const t = userText.toLowerCase();
-  if (t.includes('hint') || t.includes('stuck')) {
-    if (activeQ?.hint) return activeQ.hint;
-    if (activeQ) {
-      return `For ${activeQ.topic.toLowerCase()}, break it down — what's the very first step? The answer is one of A/B/C/D.`;
-    }
-    return 'Pick whichever choice feels closest — guessing is fine, I learn from every answer.';
-  }
   if (t.includes('explain') && activeQ) {
     return `For "${activeQ.prompt}" — read each option carefully and rule out the obviously wrong ones first.`;
   }
@@ -65,20 +65,18 @@ function newSessionId(): string {
   return `s_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-/** Auto-scaling 1280×800 stage that fits any viewport. Cap at 2× so canvas stays crisp on 4K. */
-function useStageScale(): number {
-  const [scale, setScale] = useState(1);
+/** Returns true when the viewport is below the given breakpoint (px). SSR-safe. */
+function useBelowBreakpoint(px: number): boolean {
+  const [below, setBelow] = useState(false);
   useEffect(() => {
-    function fit() {
-      const sx = window.innerWidth / 1280;
-      const sy = window.innerHeight / 800;
-      setScale(Math.min(sx, sy, 2));
+    function update() {
+      setBelow(window.innerWidth < px);
     }
-    fit();
-    window.addEventListener('resize', fit);
-    return () => window.removeEventListener('resize', fit);
-  }, []);
-  return scale;
+    update();
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, [px]);
+  return below;
 }
 
 function useRouteAttr(route: string) {
@@ -107,7 +105,8 @@ function useSessionTimer(startMs: number | null): string {
 
 export default function AssessmentPage() {
   useRouteAttr('assessment');
-  const scale = useStageScale();
+  const isMobile = useBelowBreakpoint(1024);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const [sessionId, setSessionId] = useState<string>(() => newSessionId());
   const [items, setItems] = useState<Question[]>(() => buildInitialState());
@@ -127,7 +126,9 @@ export default function AssessmentPage() {
   const [streak, setStreak] = useState(0);
   const [pending, setPending] = useState(true);
   const [report, setReport] = useState<AssessmentReport | null>(null);
+  const [studyPlanOpen, setStudyPlanOpen] = useState(false);
   const [startedAt, setStartedAt] = useState<number | null>(null);
+  const [hintLevels, setHintLevels] = useState<HintLevels>({});
 
   /** When the active question was last shown — used to compute latency on submit. */
   const questionShownAt = useRef<number>(0);
@@ -284,10 +285,18 @@ export default function AssessmentPage() {
   }
 
   function handleChatSend(text: string) {
+    let reply: string;
+    if (activeQ && isHintRequest(text)) {
+      const nextLevel = (hintLevels[activeQ.id] ?? 0) + 1;
+      setHintLevels((prev) => ({ ...prev, [activeQ.id]: nextLevel }));
+      reply = getProgressiveHint(activeQ, nextLevel, activeQ.hint);
+    } else {
+      reply = stockReply(text, activeQ);
+    }
     setChat((c) => [
       ...c,
       { who: 'you', text },
-      { who: 'tutor', text: stockReply(text, activeQ) },
+      { who: 'tutor', text: reply },
     ]);
   }
 
@@ -302,56 +311,21 @@ export default function AssessmentPage() {
     setStreak(0);
     setReport(null);
     setStartedAt(null);
+    setHintLevels({});
     void startAssessment(sid);
   }
 
   return (
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: color.bg.canvas,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        overflow: 'hidden',
-      }}
-    >
-    <div
-      style={{
-        width: 1280,
-        height: 800,
-        background: color.bg.canvas,
-        position: 'relative',
-        flexShrink: 0,
-        transform: `scale(${scale})`,
-        transformOrigin: 'center center',
-      }}
-    >
+    <div className="mn-stage-shell">
       <div
+        className="mn-stage"
         style={{
-          height: '100%',
-          background: color.bg.canvas,
-          display: 'flex',
-          flexDirection: 'column',
           fontFamily: font.sans,
           color: color.ink.primary,
         }}
       >
         {/* Top bar */}
-        <div
-          style={{
-            padding: `${space[5]}px ${space[8]}px`,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            background: color.bg.surface,
-            borderBottom: `1px solid ${color.border.default}`,
-            gap: space[8],
-            flexWrap: 'nowrap',
-            minHeight: 56,
-          }}
-        >
+        <div className="mn-topbar">
           <div
             style={{
               display: 'flex',
@@ -362,6 +336,21 @@ export default function AssessmentPage() {
               overflow: 'hidden',
             }}
           >
+            {isMobile && (
+              <button
+                type="button"
+                onClick={() => setSidebarOpen((s) => !s)}
+                aria-label="Toggle contents drawer"
+                aria-expanded={sidebarOpen}
+                className="mn-drawer-toggle"
+                style={{ padding: `${space[3]}px ${space[5]}px` }}
+              >
+                <span aria-hidden style={{ fontSize: 16, lineHeight: 1 }}>
+                  ☰
+                </span>
+                <span>Contents</span>
+              </button>
+            )}
             <div
               aria-hidden
               style={{
@@ -394,36 +383,31 @@ export default function AssessmentPage() {
             >
               Math Notebook
             </span>
-            <span
-              aria-hidden
-              style={{
-                width: 1,
-                height: 16,
-                background: color.border.default,
-                flexShrink: 0,
-              }}
-            />
-            <span
-              style={{
-                fontFamily: font.sans,
-                fontSize: fontSize.tiny,
-                color: color.ink.muted,
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-              }}
-            >
-              Adaptive diagnostic · powered by Lua agent
+            <span className="mn-topbar-tagline">
+              <span
+                aria-hidden
+                style={{
+                  width: 1,
+                  height: 16,
+                  background: color.border.default,
+                  flexShrink: 0,
+                }}
+              />
+              <span
+                style={{
+                  fontFamily: font.sans,
+                  fontSize: fontSize.tiny,
+                  color: color.ink.muted,
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                }}
+              >
+                Adaptive diagnostic · powered by an in-process LangGraph agent
+              </span>
             </span>
           </div>
-          <div
-            style={{
-              display: 'flex',
-              gap: space[7],
-              alignItems: 'center',
-              flexShrink: 0,
-            }}
-          >
+          <div className="mn-topbar-stats">
             <Stat
               icon={<ClockGlyph size={14} ink={color.ink.soft} />}
               label="time"
@@ -450,44 +434,26 @@ export default function AssessmentPage() {
           </div>
         </div>
 
-        {/* Main spread — three-pane workbook */}
-        <div
-          style={{
-            flex: 1,
-            display: 'grid',
-            gridTemplateColumns: '264px 1fr 1.4fr',
-            gap: 0,
-            minHeight: 0,
-            position: 'relative',
-            background: color.bg.canvas,
-          }}
-        >
-          {/* Sidebar */}
+        {/* Main spread — responsive grid (1 / 2 / 3 column based on viewport) */}
+        <div className="mn-stage-grid">
+          {/* Sidebar — toggleable drawer below lg, always visible at lg+ */}
           <div
-            style={{
-              background: color.bg.surface,
-              minHeight: 0,
-              position: 'relative',
-              borderRight: `1px solid ${color.border.default}`,
-            }}
+            className="mn-pane-sidebar"
+            data-hidden-mobile={isMobile && !sidebarOpen ? 'true' : 'false'}
           >
             <ContentsSidebar
               items={items}
               activeId={activeQ?.id ?? ''}
-              onPick={pickQuestion}
+              onPick={(id) => {
+                pickQuestion(id);
+                if (isMobile) setSidebarOpen(false);
+              }}
               sessionStats={sessionStats}
             />
           </div>
 
           {/* Chat pane */}
-          <div
-            style={{
-              background: color.bg.surface,
-              minHeight: 0,
-              position: 'relative',
-              borderRight: `1px solid ${color.border.default}`,
-            }}
-          >
+          <div className="mn-pane-chat">
             <ChatPane
               chat={chat}
               qIndex={qIndex}
@@ -498,13 +464,7 @@ export default function AssessmentPage() {
           </div>
 
           {/* Workings pane */}
-          <div
-            style={{
-              background: color.bg.surface,
-              minHeight: 0,
-              position: 'relative',
-            }}
-          >
+          <div className="mn-pane-workings">
             {activeQ ? (
               <WorkingsPane
                 activeQ={activeQ}
@@ -571,30 +531,24 @@ export default function AssessmentPage() {
           )}
 
           {/* Report overlay */}
-          {report && (
+          {report && !studyPlanOpen && (
             <ReportOverlay
               report={report}
               onClose={() => setReport(null)}
               onReset={reset}
+              onCreatePlan={() => setStudyPlanOpen(true)}
+            />
+          )}
+          {report && studyPlanOpen && (
+            <StudyPlanWizard
+              report={report}
+              onClose={() => setStudyPlanOpen(false)}
             />
           )}
         </div>
 
         {/* Footer */}
-        <div
-          style={{
-            padding: `${space[4]}px ${space[8]}px`,
-            background: color.bg.surface,
-            borderTop: `1px solid ${color.border.default}`,
-            color: color.ink.soft,
-            fontFamily: font.sans,
-            fontSize: fontSize.tiny,
-            display: 'flex',
-            justifyContent: 'space-between',
-            gap: space[6],
-            flexWrap: 'wrap',
-          }}
-        >
+        <div className="mn-footer">
           <span>
             session {sessionId.slice(0, 8)} · {sessionStats.done} answered ·{' '}
             {pending ? 'agent thinking…' : 'your turn'}
@@ -602,7 +556,6 @@ export default function AssessmentPage() {
           <span>Stylus + mouse · pressure-aware canvas</span>
         </div>
       </div>
-    </div>
     </div>
   );
 }
@@ -726,10 +679,12 @@ function ReportOverlay({
   report,
   onClose,
   onReset,
+  onCreatePlan,
 }: {
   report: AssessmentReport;
   onClose: () => void;
   onReset: () => void;
+  onCreatePlan: () => void;
 }) {
   const strands = Object.entries(report.strands);
   return (
@@ -865,8 +820,11 @@ function ReportOverlay({
           <Button variant="secondary" onClick={onClose}>
             Close
           </Button>
-          <Button variant="primary" onClick={onReset}>
+          <Button variant="secondary" onClick={onReset}>
             <ResetGlyph size={14} ink="currentColor" /> New session
+          </Button>
+          <Button variant="primary" onClick={onCreatePlan}>
+            Create a study plan
           </Button>
         </div>
       </SketchBox>

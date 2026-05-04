@@ -13,6 +13,10 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
+# Next.js docs treat /app/public as optional, but the runtime COPY below
+# fails hard if the directory doesn't exist. Create it eagerly so the build
+# is robust to repos that don't ship a public/ folder.
+RUN mkdir -p public
 RUN npm run build
 
 # ---------- runtime ----------

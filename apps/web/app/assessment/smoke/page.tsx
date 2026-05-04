@@ -20,8 +20,8 @@ import type {
  * Smoke-harness for the `/api/assessment` route.
  *
  * Deliberately scrappy: this exists to prove end-to-end wiring against the
- * deployed Lua agent. The polished UI lives at `/assessment`. Modern clean
- * shell with monospace data, dashed-edge debug callouts.
+ * in-process LangGraph agent. The polished UI lives at `/assessment`. Modern
+ * clean shell with monospace data, dashed-edge debug callouts.
  */
 export default function AssessmentSmokePage() {
   const [sessionId] = useState<string>(() =>
@@ -217,7 +217,7 @@ export default function AssessmentSmokePage() {
               fontSize: fontSize.body,
             }}
           >
-            Calling Lua agent…
+            Calling assessment agent…
           </p>
         )}
 

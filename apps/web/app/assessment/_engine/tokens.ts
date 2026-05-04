@@ -170,3 +170,79 @@ export const elevation = {
 export const dashedRule = `1px solid ${color.border.default}`;
 export const inkBorder = `1px solid ${color.border.default}`;
 export const focusRing = `0 0 0 3px rgba(99, 102, 241, 0.25)`;
+
+// ─── Responsive primitives ─────────────────────────────────────────
+// These ADD to the system; existing tokens above remain unchanged.
+
+export const breakpoints = {
+  sm: 375,
+  md: 768,
+  lg: 1024,
+  xl: 1280,
+} as const;
+
+export const media = {
+  sm: `@media (min-width: ${breakpoints.sm}px)`,
+  md: `@media (min-width: ${breakpoints.md}px)`,
+  lg: `@media (min-width: ${breakpoints.lg}px)`,
+  xl: `@media (min-width: ${breakpoints.xl}px)`,
+  touch: '@media (hover: none) and (pointer: coarse)',
+  pointer: '@media (hover: hover) and (pointer: fine)',
+  reducedMotion: '@media (prefers-reduced-motion: reduce)',
+} as const;
+
+// Touch-target sizing: WCAG 2.5.5 target size is 44×44 CSS px on coarse
+// pointers; on fine-pointer (mouse) UIs we relax to 32px to stay dense.
+export const tap = {
+  touch: 44,
+  pointer: 32,
+} as const;
+
+// Fluid type scale — clamps each step of `fontSize` so 14px body grows to
+// ~16px on desktop while never dipping below readable mobile minimums.
+// Each entry mirrors a key in `fontSize` so callers can swap in CSS.
+export const fontSizeFluid = {
+  micro: 'clamp(10px, 0.625rem + 0.1vw, 12px)',
+  tiny: 'clamp(11px, 0.6875rem + 0.1vw, 13px)',
+  small: 'clamp(12px, 0.75rem + 0.1vw, 14px)',
+  body: 'clamp(13px, 0.8125rem + 0.15vw, 16px)',
+  bodyLg: 'clamp(14px, 0.875rem + 0.15vw, 17px)',
+  label: 'clamp(12px, 0.75rem + 0.1vw, 14px)',
+  lead: 'clamp(15px, 0.9375rem + 0.2vw, 18px)',
+  h4: 'clamp(15px, 0.9375rem + 0.25vw, 19px)',
+  h3: 'clamp(17px, 1.0625rem + 0.4vw, 22px)',
+  h2: 'clamp(20px, 1.25rem + 0.6vw, 28px)',
+  h1: 'clamp(24px, 1.5rem + 1vw, 36px)',
+  celebration: 'clamp(40px, 2.5rem + 3vw, 72px)',
+} as const;
+
+// Fluid spacing ramp — string-valued counterpart to `space` numeric ramp.
+// Padding / gap values that should breathe between mobile and desktop
+// without media queries.
+export const spaceFluid = {
+  0: '0px',
+  1: 'clamp(2px, 0.125rem + 0.05vw, 4px)',
+  2: 'clamp(3px, 0.1875rem + 0.05vw, 6px)',
+  3: 'clamp(4px, 0.25rem + 0.1vw, 8px)',
+  4: 'clamp(6px, 0.375rem + 0.15vw, 12px)',
+  5: 'clamp(8px, 0.5rem + 0.25vw, 16px)',
+  6: 'clamp(12px, 0.75rem + 0.4vw, 22px)',
+  7: 'clamp(14px, 0.875rem + 0.5vw, 28px)',
+  8: 'clamp(16px, 1rem + 0.75vw, 36px)',
+  10: 'clamp(20px, 1.25rem + 1vw, 48px)',
+  12: 'clamp(24px, 1.5rem + 1.25vw, 60px)',
+  16: 'clamp(32px, 2rem + 2vw, 80px)',
+} as const;
+
+// Container width ramp — useful for stage / panel `max-width`.
+export const containerWidth = {
+  sm: 480,
+  md: 720,
+  lg: 960,
+  xl: 1200,
+  xxl: 1440,
+} as const;
+
+export type Breakpoint = keyof typeof breakpoints;
+export type FontSizeFluid = keyof typeof fontSizeFluid;
+export type SpaceFluid = keyof typeof spaceFluid;

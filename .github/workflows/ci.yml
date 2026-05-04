@@ -7,8 +7,8 @@ on:
     branches: [main]
 
 jobs:
-  agent:
-    name: lua-agent (typecheck + tests)
+  core:
+    name: core (typecheck + tests)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,11 +27,8 @@ jobs:
       - name: Typecheck core
         run: pnpm --filter @maths-diag/core run build
 
-      - name: Build agent
-        run: pnpm --filter lua-agent run build
-
-      - name: Test agent
-        run: pnpm --filter lua-agent run test
+      - name: Test core
+        run: pnpm --filter @maths-diag/core run test
 
   web:
     name: web (typecheck + build)
@@ -56,8 +53,7 @@ jobs:
       - name: Build web
         run: pnpm --filter web run build
         env:
-          LUA_AGENT_ID: placeholder
-          LUA_API_KEY: placeholder
+          OPENROUTER_API_KEY: placeholder
 
   # No deploy job — production deploys are run manually from a laptop via
   # scripts/deploy.sh. Keeps the SSH key out of GitHub Actions and prevents
