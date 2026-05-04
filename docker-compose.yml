@@ -10,8 +10,8 @@
 services:
   web:
     build:
-      context: ./apps/web
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: apps/web/Dockerfile
     image: maths-test-web:latest
     container_name: maths-test-web
     restart: unless-stopped
