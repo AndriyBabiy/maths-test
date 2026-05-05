@@ -45,6 +45,11 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # Web typechecks against the compiled `dist/` of @maths-diag/core,
+      # so build the workspace dep first.
+      - name: Build core (workspace dep)
+        run: pnpm --filter @maths-diag/core run build
+
       - name: Typecheck web
         run: pnpm --filter web run typecheck
 
