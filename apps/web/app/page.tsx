@@ -136,28 +136,6 @@ export default function HomePage() {
           Start the assessment
           <span aria-hidden style={{ fontWeight: fontWeight.regular }}>→</span>
         </Link>
-        <p
-          style={{
-            fontSize: fontSize.tiny,
-            color: color.ink.soft,
-            marginTop: space[7],
-            marginBottom: 0,
-          }}
-        >
-          Debugging the agent?{' '}
-          <Link
-            href="/assessment/smoke"
-            style={{
-              color: color.accent.primary,
-              textDecoration: 'underline',
-              textUnderlineOffset: 2,
-              fontWeight: fontWeight.medium,
-            }}
-          >
-            Open the smoke harness
-          </Link>
-          .
-        </p>
       </div>
     </main>
   );

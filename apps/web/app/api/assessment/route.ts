@@ -6,6 +6,7 @@
  * the LLM is only responsible for short learner-facing commentary.
  */
 import { type NextRequest, NextResponse } from 'next/server';
+import { clientIp, rateLimit } from '../_lib/rate-limit';
 import type {
   AssessmentRequest,
   AssessmentResponse,
@@ -21,6 +22,12 @@ import {
 export const dynamic = 'force-dynamic';
 
 const ITEMS_CAP = 20;
+
+/**
+ * 60 requests/minute/IP — comfortable for one student (start + ~20 answers +
+ * finalise = 22 calls per session) while still cutting off scripted floods.
+ */
+const ASSESSMENT_LIMIT = { capacity: 60, windowMs: 60_000 };
 
 /** Hand-rolled validator. Avoids a `zod` dependency in this route file. */
 function parseAssessmentRequest(
@@ -73,6 +80,22 @@ function errorResponse(message: string, status = 500): Response {
 }
 
 export async function POST(req: NextRequest): Promise<Response> {
+  // Rate limit early so floods of malformed bodies still get shed.
+  const ip = clientIp(req);
+  const limit = rateLimit(`assessment:${ip}`, ASSESSMENT_LIMIT);
+  if (!limit.allowed) {
+    return NextResponse.json<AssessmentResponse>(
+      {
+        kind: 'error',
+        message: `Too many requests — try again in ${limit.retryAfter}s.`,
+      },
+      {
+        status: 429,
+        headers: { 'Retry-After': String(limit.retryAfter) },
+      },
+    );
+  }
+
   let body: AssessmentRequest;
   try {
     const raw: unknown = await req.json();

@@ -10,9 +10,11 @@ import type {
   AssessmentResponse,
   PublicItem,
 } from '@/app/api/assessment/types';
+import type { TutorRequest, TutorResponse } from '@/app/api/tutor/types';
 import type { Question, QuestionState } from './types';
 
 const ENDPOINT = '/api/assessment';
+const TUTOR_ENDPOINT = '/api/tutor';
 
 async function postAssessment(body: unknown): Promise<AssessmentResponse> {
   try {
@@ -49,6 +51,27 @@ export function apiFinalise(sessionId: string): Promise<AssessmentResponse> {
 }
 
 /**
+ * POST a tutor turn. Network/parse failures collapse into a typed error so
+ * callers can branch on `kind` without their own try/catch.
+ */
+export async function apiTutor(req: TutorRequest): Promise<TutorResponse> {
+  try {
+    const res = await fetch(TUTOR_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req),
+    });
+    const json = (await res.json()) as TutorResponse;
+    return json;
+  } catch (err) {
+    return {
+      kind: 'error',
+      message: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+/**
  * Friendly strand names. Mirrors `SECTION_META` titles in `content.ts`, but
  * kept here so `publicItemToQuestion` can stay self-contained.
  */
@@ -80,6 +103,7 @@ export function publicItemToQuestion(
     itemId: item.id,
     section: item.strand,
     strand: item.strand,
+    learningOutcome: item.learningOutcome,
     topic: STRAND_TITLE[item.strand] ?? item.strand,
     difficulty: difficultyFromB(item.b),
     prompt: item.text,

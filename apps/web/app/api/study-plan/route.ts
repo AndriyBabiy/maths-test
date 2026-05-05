@@ -9,9 +9,13 @@
  */
 import { type NextRequest, NextResponse } from 'next/server';
 import type { AssessmentReport, StudyPlanInput } from '@maths-diag/core';
+import { clientIp, rateLimit } from '../_lib/rate-limit';
 import { buildStudyPlan } from './_agent';
 
 export const dynamic = 'force-dynamic';
+
+/** 10 plans/hour/IP — generation is a heavy multi-step LLM call. */
+const STUDY_PLAN_LIMIT = { capacity: 10, windowMs: 60 * 60 * 1_000 };
 
 const VALID_TIERS = new Set(['foundation', 'ordinary', 'higher']);
 const VALID_STRANDS = new Set([
@@ -86,6 +90,15 @@ function parseBody(raw: unknown): { ok: true; value: ParsedBody } | { ok: false;
 }
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
+  const ip = clientIp(req);
+  const limit = rateLimit(`study-plan:${ip}`, STUDY_PLAN_LIMIT);
+  if (!limit.allowed) {
+    return NextResponse.json(
+      { error: `Too many study-plan requests — try again in ${limit.retryAfter}s.` },
+      { status: 429, headers: { 'Retry-After': String(limit.retryAfter) } },
+    );
+  }
+
   let raw: unknown;
   try {
     raw = await req.json();
