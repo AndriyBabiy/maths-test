@@ -19,6 +19,7 @@ next-env.d.ts
 
 # tool caches that may contain session/auth artefacts
 .playwright-cli/
+.claude/
 
 # scratch / external content not part of the project
 excalidraw.log
