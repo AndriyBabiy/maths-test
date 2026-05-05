@@ -15,7 +15,11 @@ import type { PaperKind } from './_components/PenCanvas';
 import { Button, SketchBox } from './_components/primitives';
 import { WorkingsPane } from './_components/WorkingsPane';
 import { assessAndAdapt } from './_engine/adapt';
-import { apiStart, publicItemToQuestion } from './_engine/api-client';
+import {
+  apiStart,
+  apiTutor,
+  publicItemToQuestion,
+} from './_engine/api-client';
 import { buildInitialState } from './_engine/content';
 import { getProgressiveHint, type HintLevels } from './_engine/hints';
 import {
@@ -45,17 +49,10 @@ const INTRO_CHAT: ChatMessage[] = [
   },
 ];
 
+/** Heuristic: hint-flavoured messages get the offline fallback when the LLM is down. */
 function isHintRequest(text: string): boolean {
   const t = text.toLowerCase();
   return t.includes('hint') || t.includes('stuck') || t.includes('help');
-}
-
-function stockReply(userText: string, activeQ: Question | null): string {
-  const t = userText.toLowerCase();
-  if (t.includes('explain') && activeQ) {
-    return `For "${activeQ.prompt}" — read each option carefully and rule out the obviously wrong ones first.`;
-  }
-  return "Got it. Take your time on the scratchpad and pick a choice when you're ready.";
 }
 
 function newSessionId(): string {
@@ -284,20 +281,64 @@ export default function AssessmentPage() {
     setPending(false);
   }
 
-  function handleChatSend(text: string) {
-    let reply: string;
-    if (activeQ && isHintRequest(text)) {
+  async function handleChatSend(text: string) {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+
+    // Optimistic write: append the student message + a thinking placeholder.
+    // We'll replace the placeholder once the LLM responds (or fall back).
+    const PLACEHOLDER = '…';
+    const historyForPrompt = chat
+      .slice(-10)
+      .map((m) => ({ who: m.who, text: m.text }));
+    const optimistic: ChatMessage[] = [
+      ...chat,
+      { who: 'you', text: trimmed },
+      { who: 'tutor', text: PLACEHOLDER },
+    ];
+    const placeholderIndex = optimistic.length - 1;
+    setChat(optimistic);
+
+    // Strip internal fields; the tutor must never see correctIndex or strokes.
+    const question =
+      activeQ && activeQ.choices
+        ? {
+            text: activeQ.prompt,
+            choices: activeQ.choices,
+            strand: activeQ.strand ?? activeQ.section,
+            learningOutcome: activeQ.learningOutcome ?? '',
+          }
+        : null;
+
+    const response = await apiTutor({
+      sessionId,
+      question,
+      history: historyForPrompt,
+      message: trimmed,
+    });
+
+    let replyText: string;
+    if (response.kind === 'reply') {
+      replyText = response.text;
+    } else if (activeQ && isHintRequest(trimmed)) {
+      // LLM unavailable but the student asked for help — degrade to the
+      // hand-authored progressive hint library so chat keeps moving.
       const nextLevel = (hintLevels[activeQ.id] ?? 0) + 1;
       setHintLevels((prev) => ({ ...prev, [activeQ.id]: nextLevel }));
-      reply = getProgressiveHint(activeQ, nextLevel, activeQ.hint);
+      replyText = getProgressiveHint(activeQ, nextLevel, activeQ.hint);
     } else {
-      reply = stockReply(text, activeQ);
+      replyText = response.message;
     }
-    setChat((c) => [
-      ...c,
-      { who: 'you', text },
-      { who: 'tutor', text: reply },
-    ]);
+
+    setChat((c) => {
+      // Guard against the slot being shifted by another update (e.g. reset).
+      if (c[placeholderIndex]?.text !== PLACEHOLDER) {
+        return [...c, { who: 'tutor', text: replyText }];
+      }
+      const next = c.slice();
+      next[placeholderIndex] = { who: 'tutor', text: replyText };
+      return next;
+    });
   }
 
   function reset() {

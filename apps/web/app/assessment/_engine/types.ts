@@ -29,6 +29,8 @@ export interface QuestionTemplate {
   itemId?: string;
   /** Backend strand — drives sectional grouping in the sidebar. */
   strand?: string;
+  /** Curriculum learning outcome string, e.g. "JC.AL.O.4: Factorise quadratics". */
+  learningOutcome?: string;
 }
 
 export interface Question extends QuestionTemplate {
