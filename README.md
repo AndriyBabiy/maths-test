@@ -170,6 +170,23 @@ a Redis or Postgres backend is a one-file change.
 
 ---
 
+## Talk artifacts
+
+The project was presented at Zero-to-Agent Dublin. Three companion artifacts
+cover the three delivery surfaces — visual triggers on stage, post-talk deep
+reading, and the spoken script the talk follows.
+
+| Artifact | Form | Purpose |
+|---|---|---|
+| [`presentations/irish-maths-diagnostic-pdf/build/presentation.pdf`](./presentations/irish-maths-diagnostic-pdf/build/presentation.pdf) | 19-page A4 PDF | Presenter trigger sheet — bullets, code excerpts, diagrams; one slide per beat. |
+| [`presentations/irish-maths-diagnostic-academic-pdf/build/academic-guide.pdf`](./presentations/irish-maths-diagnostic-academic-pdf/build/academic-guide.pdf) | 58-page A4 PDF | Long-form academic deep-dive — full code listings, alternatives, exercises, bibliography. |
+| [`presentations/irish-maths-diagnostic-script/SCRIPT.md`](./presentations/irish-maths-diagnostic-script/SCRIPT.md) | Markdown | The spoken script — hybrid word-for-word + speaker notes; cross-references the presenter PDF. |
+
+Cue card and Q&A bank live alongside the script in
+[`presentations/irish-maths-diagnostic-script/notes/`](./presentations/irish-maths-diagnostic-script/notes/).
+
+---
+
 ## Local Development
 
 ### Prerequisites

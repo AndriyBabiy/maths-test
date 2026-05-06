@@ -212,3 +212,19 @@ export function CircleGlyph(props: GlyphProps) {
     </Svg>
   );
 }
+
+export function MenuGlyph(props: GlyphProps) {
+  return (
+    <Svg title={props.title ?? 'Menu'} {...props}>
+      <path d="M4 7h16M4 12h16M4 17h16" />
+    </Svg>
+  );
+}
+
+export function ChatBubbleGlyph(props: GlyphProps) {
+  return (
+    <Svg title={props.title ?? 'Tutor'} {...props}>
+      <path d="M21 12a8 8 0 0 1-12.6 6.5L3 20l1.5-5.4A8 8 0 1 1 21 12z" />
+    </Svg>
+  );
+}

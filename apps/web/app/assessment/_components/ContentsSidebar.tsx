@@ -27,6 +27,16 @@ interface ContentsSidebarProps {
   activeId: string;
   onPick: (id: string) => void;
   sessionStats: SessionStats;
+  /**
+   * Rendering mode controlled by the parent based on viewport:
+   *   'full'   — desktop ≥1280: full panel (default)
+   *   'drawer' — off-canvas drawer at <1280: same content as full
+   *   'rail'   — 1024–1279: 48px icon rail showing per-strand status dots.
+   *              Each icon click calls `onOpenDrawer` to expand into the drawer.
+   */
+  mode?: 'rail' | 'drawer' | 'full';
+  /** Only used when `mode === 'rail'`. Opens the off-canvas drawer. */
+  onOpenDrawer?: () => void;
 }
 
 type PillTone = 'done' | 'now' | 'next' | 'locked';
@@ -76,6 +86,8 @@ export function ContentsSidebar({
   activeId,
   onPick,
   sessionStats,
+  mode = 'full',
+  onOpenDrawer,
 }: ContentsSidebarProps) {
   const sections = groupBySection(items);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -86,6 +98,71 @@ export function ContentsSidebar({
     sessionStats.total > 0
       ? Math.min(100, (100 * sessionStats.done) / sessionStats.total)
       : 0;
+
+  // Rail mode: 48px-wide icon column. Each icon click opens the drawer
+  // (the full sidebar). The rail's job is "see strand status at a glance".
+  if (mode === 'rail') {
+    return (
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: space[3],
+          padding: `${space[4]}px ${space[2]}px`,
+          height: '100%',
+          background: color.bg.sidebar,
+        }}
+      >
+        <button
+          type="button"
+          onClick={onOpenDrawer}
+          aria-label="Open contents drawer"
+          title="Contents"
+          style={railIconStyle(false)}
+        >
+          <NotebookGlyph size={18} ink={color.ink.secondary} />
+        </button>
+        <div
+          aria-hidden
+          style={{
+            width: 24,
+            height: 1,
+            background: color.border.subtle,
+            margin: `${space[1]}px 0`,
+          }}
+        />
+        {sections.map((sec) => {
+          let StatusIcon: React.ReactNode;
+          if (sec.state === 'done') {
+            StatusIcon = (
+              <TickGlyph size={14} ink={color.feedback.goodInk} />
+            );
+          } else if (sec.state === 'now') {
+            StatusIcon = (
+              <CircleDotGlyph size={14} ink={color.accent.primary} />
+            );
+          } else if (sec.state === 'locked') {
+            StatusIcon = <LockGlyph size={14} ink={color.ink.faint} />;
+          } else {
+            StatusIcon = <CircleGlyph size={14} ink={color.ink.soft} />;
+          }
+          return (
+            <button
+              key={sec.id}
+              type="button"
+              onClick={onOpenDrawer}
+              aria-label={`${sec.title} — ${sec.state}. Open drawer.`}
+              title={sec.title}
+              style={railIconStyle(sec.state === 'now')}
+            >
+              {StatusIcon}
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -541,6 +618,25 @@ export function ContentsSidebar({
       </div>
     </div>
   );
+}
+
+function railIconStyle(active: boolean): React.CSSProperties {
+  return {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 32,
+    height: 32,
+    minWidth: 32,
+    minHeight: 32,
+    borderRadius: radius.md,
+    background: active ? color.accent.primarySoft : 'transparent',
+    border: 'none',
+    color: color.ink.primary,
+    cursor: 'pointer',
+    padding: 0,
+    flexShrink: 0,
+  };
 }
 
 function LegendItem({

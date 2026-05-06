@@ -14,6 +14,7 @@ import { createLLM } from '../assessment/_agent/llm';
 import { clientIp, rateLimit } from '../_lib/rate-limit';
 import { traceLLM } from '../_lib/llm-trace';
 import { capture } from '../_lib/posthog-server';
+import { interpretStrokes } from './_lib/interpret-strokes';
 import type {
   TutorQuestion,
   TutorRequest,
@@ -31,6 +32,10 @@ const HISTORY_MAX = 12;
 
 /** Cap on individual message length so a malicious client can't blow the prompt budget. */
 const MESSAGE_MAX_CHARS = 2_000;
+
+/** Wire-cap on the scratchpad PNG — keeps OpenRouter request bodies bounded. */
+const STROKES_PNG_MAX_BYTES = 1_400_000;
+const STROKES_PNG_PREFIX = 'data:image/png;base64,';
 
 const ReplySchema = z.object({
   reply: z.string().min(1).max(700),
@@ -115,6 +120,17 @@ function parseTutorRequest(
     return { ok: false, error: history.error };
   }
 
+  let strokesPng: string | undefined;
+  if (typeof r.strokesPng === 'string' && r.strokesPng) {
+    if (!r.strokesPng.startsWith(STROKES_PNG_PREFIX)) {
+      return { ok: false, error: 'strokesPng must be a PNG data URL' };
+    }
+    if (r.strokesPng.length > STROKES_PNG_MAX_BYTES) {
+      return { ok: false, error: 'strokesPng exceeds size cap' };
+    }
+    strokesPng = r.strokesPng;
+  }
+
   return {
     ok: true,
     value: {
@@ -123,15 +139,21 @@ function parseTutorRequest(
       question: question as TutorQuestion | null,
       history,
       message,
+      strokesPng,
     },
   };
 }
 
-function buildPrompt(req: TutorRequest): string {
+function buildPrompt(
+  req: TutorRequest,
+  scratchpadInterpretation: string | null,
+): string {
   const lines: string[] = [
     'You are a warm, focused Irish maths tutor coaching a Junior-Cycle student through a multiple-choice diagnostic question.',
-    'Coach Socratically: ask what they have tried, name the relevant rule, and suggest one small next step they can try on their scratchpad.',
+    "You receive a best-effort transcription of the student's scratchpad from a separate vision model. Treat it as a noisy hint, not ground truth — confirm what they got by asking them.",
+    "If the transcription is `(blank)` or absent, the student has not written anything visible yet. Encourage them to try a first step on the pad and tell you what they get.",
     'NEVER reveal which option (A/B/C/D) is correct. NEVER compute or state the final numeric answer. If the student asks for the answer, redirect: "Try the next step on the pad and tell me what you get."',
+    "NEVER mention to the student that there is a vision model or transcription — talk as if you are simply paying attention to their working.",
     'Keep replies under 90 words. Use plain prose, not markdown headings or bullet bullets. Wrap any maths in $...$ (e.g. $x^2 + 2x$).',
     'If the student is genuinely stuck, give a progressively deeper hint, but stop short of doing the work for them.',
     'Stay strictly on the active question — refuse off-topic chitchat with one sentence and steer back.',
@@ -156,6 +178,20 @@ function buildPrompt(req: TutorRequest): string {
       '',
       `# Active question`,
       `(No question is active yet — gently let the student know the first question is loading and offer a quick warm-up tip.)`,
+    );
+  }
+
+  if (scratchpadInterpretation) {
+    lines.push(
+      '',
+      '# Scratchpad (auto-transcription, may be inaccurate)',
+      scratchpadInterpretation,
+    );
+  } else {
+    lines.push(
+      '',
+      '# Scratchpad',
+      '(no transcription available for this turn)',
     );
   }
 
@@ -225,12 +261,25 @@ export async function POST(req: NextRequest): Promise<Response> {
       strand: body.question?.strand,
       learning_outcome: body.question?.learningOutcome,
       history_turns: body.history.length,
+      has_scratchpad_png: body.strokesPng !== undefined,
     },
   });
 
+  // Run the lite vision model first, in series, so its output can be inlined
+  // into the main tutor prompt. Failures (no key, model down, oversize PNG)
+  // collapse to `null` and the main tutor still answers — just without
+  // canvas-aware coaching for this turn.
+  const scratchpadInterpretation = body.strokesPng
+    ? await interpretStrokes({
+        pngDataUrl: body.strokesPng,
+        sessionId: body.sessionId,
+        distinctId: phDistinctId,
+      })
+    : null;
+
   try {
     const llm = createLLM().withStructuredOutput(ReplySchema, { name: 'reply' });
-    const out = await traceLLM(llm, buildPrompt(body), {
+    const out = await traceLLM(llm, buildPrompt(body, scratchpadInterpretation), {
       distinctId: phDistinctId,
       traceId: body.sessionId,
       spanName: 'tutor_reply',

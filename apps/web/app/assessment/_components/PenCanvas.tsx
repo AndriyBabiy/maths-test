@@ -19,6 +19,13 @@ export interface PenCanvasHandle {
   undo: () => void;
   clear: () => void;
   snapshot: () => string | undefined;
+  /**
+   * Returns a downscaled PNG data URL of the current canvas — used by the
+   * tutor pipeline to ship the working to a lite vision model. Caps the
+   * longest edge at `maxWidth` (default 1024px) to keep the request body
+   * under the route's 1.2MB ceiling on Retina displays.
+   */
+  snapshotPng: (maxWidth?: number) => string | undefined;
   resetView: () => void;
   zoomIn: () => void;
   zoomOut: () => void;
@@ -104,6 +111,19 @@ export function PenCanvas({
       undo: () => onStrokesChange?.(strokes.slice(0, -1)),
       clear: () => onStrokesChange?.([]),
       snapshot: () => canvasRef.current?.toDataURL('image/png'),
+      snapshotPng: (maxWidth = 1024) => {
+        const c = canvasRef.current;
+        if (!c || c.width === 0 || c.height === 0) return undefined;
+        if (c.width <= maxWidth) return c.toDataURL('image/png');
+        const scale = maxWidth / c.width;
+        const off = document.createElement('canvas');
+        off.width = maxWidth;
+        off.height = Math.max(1, Math.round(c.height * scale));
+        const ctx = off.getContext('2d');
+        if (!ctx) return undefined;
+        ctx.drawImage(c, 0, 0, off.width, off.height);
+        return off.toDataURL('image/png');
+      },
       resetView: () => {
         setPan({ x: 0, y: 0 });
         setZoom(1);

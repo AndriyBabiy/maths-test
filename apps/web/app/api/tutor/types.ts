@@ -33,6 +33,16 @@ export interface TutorRequest {
   history: TutorTurn[];
   /** New student message to coach against. */
   message: string;
+  /**
+   * PNG of the scratchpad as a `data:image/png;base64,…` URL. Captured by the
+   * client only when the student has actually drawn something. The route
+   * passes this to a separate, cheap vision model (the "interpreter") which
+   * produces a 1–2 sentence textual description; that description is then
+   * inlined into the main tutor's prompt so it can coach against the actual
+   * working — without swapping the main model to a vision-capable one.
+   * Hard wire-cap of ~1.2MB; oversized payloads are rejected at parse.
+   */
+  strokesPng?: string;
 }
 
 export type TutorResponse =

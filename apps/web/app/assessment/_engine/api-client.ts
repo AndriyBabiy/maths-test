@@ -88,6 +88,9 @@ export async function apiTutor(req: TutorRequest): Promise<TutorResponse> {
     const res = await fetch(TUTOR_ENDPOINT, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      // The body already carries `strokesPng` when the student has working on
+      // the pad — the spread copies it through. distinctId falls back to the
+      // PostHog browser id so server-side $ai_generation events join up.
       body: JSON.stringify({ ...req, distinctId: req.distinctId ?? getDistinctId() }),
     });
     const json = (await res.json()) as TutorResponse;

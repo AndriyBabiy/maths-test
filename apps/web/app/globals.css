@@ -139,22 +139,16 @@ a {
 
 /* ─── Assessment stage — responsive grid ────────────────────────── */
 
-/* Outer shell: viewport-bound on tablet+, scrolling document on mobile.
-   Below md we let the page scroll naturally so chat + question + workings
-   can all be reached without fighting overflow inside fixed panes. */
+/* Outer shell — full-bleed at every breakpoint. The mobile tabbed layout
+   needs a non-scrolling page so each tab pane can fill the viewport and
+   the canvas keeps its touch-action contract. */
 .mn-stage-shell {
   background: var(--bg-canvas);
   display: flex;
   flex-direction: column;
-  min-height: 100dvh;
-}
-
-@media (min-width: 768px) {
-  .mn-stage-shell {
-    position: fixed;
-    inset: 0;
-    overflow: hidden;
-  }
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
 }
 
 .mn-stage {
@@ -165,203 +159,171 @@ a {
   background: var(--bg-canvas);
 }
 
-/* Three-pane grid — adapts by viewport.
-   < md (default mobile): single column, panes stack vertically.
-   md – lg: two columns, sidebar rail spans both rows so chat sits
-            above workings on the right.
-   lg+: three columns (264 / 1fr / 1.4fr), the original desktop layout.
-*/
+/* Four-tier responsive grid:
+   < 768  (mobile): single cell, all three panes overlap; only the active
+                    tab pane is visible (controlled via [data-tab-active]).
+   768 – 1023      : 2-col chat | workings; sidebar moves to drawer.
+   1024 – 1279     : 3-col with 48px icon rail + chat + workings.
+   ≥ 1280  (desktop): current 264px | 1fr | 1.4fr. */
+
 .mn-stage-grid {
   flex: 1;
   display: grid;
-  grid-template-columns: 1fr;
-  grid-template-rows: auto auto 1fr;
   gap: 0;
   min-height: 0;
   position: relative;
   background: var(--bg-canvas);
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr;
 }
 
-.mn-pane-sidebar {
+.mn-pane-sidebar,
+.mn-pane-chat,
+.mn-pane-workings {
+  background: var(--bg-surface);
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Mobile (<768): all three panes target the same cell; tab state hides
+   the inactive ones. The sidebar pane is *always* hidden on mobile — it's
+   only reachable via the drawer (Step 4 in the plan). */
+.mn-pane-sidebar,
+.mn-pane-chat,
+.mn-pane-workings {
   grid-column: 1;
   grid-row: 1;
 }
 
-.mn-pane-chat {
-  grid-column: 1;
-  grid-row: 2;
+.mn-pane-sidebar[data-tab-active='false'],
+.mn-pane-chat[data-tab-active='false'],
+.mn-pane-workings[data-tab-active='false'] {
+  display: none;
 }
 
-.mn-pane-workings {
-  grid-column: 1;
-  grid-row: 3;
-}
-
-@media (min-width: 768px) {
-  .mn-stage-grid {
-    grid-template-columns: 72px 1fr;
-    grid-template-rows: minmax(0, 1fr) minmax(0, 1.6fr);
-  }
-
+@media (max-width: 767px) {
   .mn-pane-sidebar {
-    grid-column: 1;
-    grid-row: 1 / span 2;
-  }
-
-  .mn-pane-chat {
-    grid-column: 2;
-    grid-row: 1;
-    border-right: none;
-    border-bottom: 1px solid var(--border-default);
-  }
-
-  .mn-pane-workings {
-    grid-column: 2;
-    grid-row: 2;
+    display: none;
   }
 }
 
-@media (min-width: 1024px) {
+/* iPad portrait (768 – 1023): chat + workings side by side, no sidebar
+   in the grid. */
+@media (min-width: 768px) and (max-width: 1023px) {
   .mn-stage-grid {
-    grid-template-columns: 264px 1fr 1.4fr;
+    grid-template-columns: 1fr 1.4fr;
     grid-template-rows: 1fr;
   }
-
+  /* Reset the data-tab-active hiding — at this size all panes show. */
+  .mn-pane-chat[data-tab-active='false'],
+  .mn-pane-workings[data-tab-active='false'] {
+    display: flex;
+  }
   .mn-pane-sidebar {
+    display: none;
+  }
+  .mn-pane-chat {
     grid-column: 1;
     grid-row: 1;
+    border-right: 1px solid var(--border-default);
   }
-
-  .mn-pane-chat {
+  .mn-pane-workings {
     grid-column: 2;
     grid-row: 1;
   }
+}
 
+/* iPad landscape / small desktop (1024 – 1279): 48px icon rail + chat + workings. */
+@media (min-width: 1024px) and (max-width: 1279px) {
+  .mn-stage-grid {
+    grid-template-columns: 48px 1fr 1.4fr;
+    grid-template-rows: 1fr;
+  }
+  .mn-pane-sidebar[data-tab-active='false'],
+  .mn-pane-chat[data-tab-active='false'],
+  .mn-pane-workings[data-tab-active='false'] {
+    display: flex;
+  }
+  .mn-pane-sidebar {
+    display: flex;
+    grid-column: 1;
+    grid-row: 1;
+    border-right: 1px solid var(--border-default);
+  }
+  .mn-pane-chat {
+    grid-column: 2;
+    grid-row: 1;
+    border-right: 1px solid var(--border-default);
+  }
   .mn-pane-workings {
     grid-column: 3;
     grid-row: 1;
   }
 }
 
-/* Sidebar — full-width drawer on mobile (slide-in), rail on tablet, full pane on desktop. */
-.mn-pane-sidebar {
-  background: var(--bg-surface);
-  min-height: 0;
-  position: relative;
-  border-right: 1px solid var(--border-default);
-  border-bottom: 1px solid var(--border-default);
-}
-
-@media (min-width: 768px) {
+/* Full desktop (≥1280): the original three-column layout. */
+@media (min-width: 1280px) {
+  .mn-stage-grid {
+    grid-template-columns: 264px 1fr 1.4fr;
+    grid-template-rows: 1fr;
+  }
+  .mn-pane-sidebar[data-tab-active='false'],
+  .mn-pane-chat[data-tab-active='false'],
+  .mn-pane-workings[data-tab-active='false'] {
+    display: flex;
+  }
   .mn-pane-sidebar {
-    border-bottom: none;
+    display: flex;
+    grid-column: 1;
+    grid-row: 1;
+    border-right: 1px solid var(--border-default);
   }
-}
-
-/* Chat pane: shows below the workings on mobile (collapsible),
-   appears as a column on tablet+. */
-.mn-pane-chat {
-  background: var(--bg-surface);
-  min-height: 0;
-  position: relative;
-  border-right: 1px solid var(--border-default);
-  border-bottom: 1px solid var(--border-default);
-  display: flex;
-  flex-direction: column;
-}
-
-@media (min-width: 768px) {
   .mn-pane-chat {
-    border-bottom: none;
+    grid-column: 2;
+    grid-row: 1;
+    border-right: 1px solid var(--border-default);
   }
-}
-
-/* Workings pane: always visible, fills remaining height. */
-.mn-pane-workings {
-  background: var(--bg-surface);
-  min-height: 60vh;
-  position: relative;
-  display: flex;
-  flex-direction: column;
-}
-
-@media (min-width: 768px) {
   .mn-pane-workings {
-    min-height: 0;
+    grid-column: 3;
+    grid-row: 1;
   }
 }
 
-/* Mobile drawer toggle — only visible below md. */
-.mn-drawer-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  min-height: 44px;
-  background: var(--bg-surface);
-  border: 1px solid var(--border-default);
-  border-radius: 8px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--ink-primary);
-  cursor: pointer;
-  transition: background 120ms cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.mn-drawer-toggle:hover {
-  background: var(--bg-muted);
-}
-
-@media (min-width: 1024px) {
-  .mn-drawer-toggle {
-    display: none;
-  }
-}
-
-/* On mobile, the contents sidebar can be hidden behind a toggle
-   to free up vertical space for the question and workings. */
-.mn-pane-sidebar[data-hidden-mobile='true'] {
-  display: none;
-}
-
-@media (min-width: 768px) {
-  .mn-pane-sidebar[data-hidden-mobile='true'] {
-    display: block;
-  }
-}
-
-/* Top bar — wraps stat row beneath title on narrow screens. */
+/* Top bar — slim on mobile (48px), comfortable from md+ (56px). */
 .mn-topbar {
-  padding: 12px 16px;
+  padding: 8px 12px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   background: var(--bg-surface);
   border-bottom: 1px solid var(--border-default);
-  gap: 12px;
-  flex-wrap: wrap;
-  min-height: 56px;
+  gap: 8px;
+  min-height: 48px;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
 }
 
 @media (min-width: 768px) {
   .mn-topbar {
     padding: 12px 24px;
-    flex-wrap: nowrap;
+    gap: 12px;
+    min-height: 56px;
   }
 }
 
 .mn-topbar-stats {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: flex-end;
 }
 
 @media (min-width: 480px) {
   .mn-topbar-stats {
     gap: 12px;
-    flex-wrap: nowrap;
   }
 }
 
@@ -371,12 +333,22 @@ a {
   }
 }
 
-/* Hide the tagline (separator + tagline) on tight viewports. */
+/* Brand mark (M chip + "Math Notebook") and stat labels both hide at very
+   narrow widths so the hamburger + values + reset always fit. */
+@media (max-width: 479px) {
+  .mn-topbar-brand,
+  .mn-stat-label {
+    display: none;
+  }
+}
+
+/* Tagline (Math Notebook · diagnostic) hidden until xl — mobile + iPad
+   both keep the topbar tight. */
 .mn-topbar-tagline {
   display: none;
 }
 
-@media (min-width: 1024px) {
+@media (min-width: 1280px) {
   .mn-topbar-tagline {
     display: inline-flex;
     align-items: center;
@@ -384,22 +356,89 @@ a {
   }
 }
 
-/* Footer wraps on narrow screens. */
+/* Footer — hidden on mobile (the bottom tab bar takes its slot), reappears
+   from md+. */
 .mn-footer {
   padding: 8px 16px;
   background: var(--bg-surface);
   border-top: 1px solid var(--border-default);
   color: var(--ink-soft);
   font-size: 12px;
-  display: flex;
+  display: none;
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
+  flex-shrink: 0;
 }
 
 @media (min-width: 768px) {
   .mn-footer {
+    display: flex;
     padding: 10px 24px;
+  }
+}
+
+/* Mobile bottom tab bar — sticky to the viewport bottom, only at <md.
+   Clears the iOS home-indicator via env(safe-area-inset-bottom). */
+.mn-tabbar {
+  display: flex;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border-default);
+  flex-shrink: 0;
+  padding-bottom: env(safe-area-inset-bottom, 0);
+}
+
+@media (min-width: 768px) {
+  .mn-tabbar {
+    display: none;
+  }
+}
+
+/* Drawer overlay — sidebar as off-canvas at <1280, click-to-open. */
+.mn-drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.4);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 40;
+}
+.mn-drawer-backdrop[data-open='true'] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.mn-drawer {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: min(280px, 86vw);
+  background: var(--bg-surface);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08), 0 4px 8px rgba(15, 23, 42, 0.04);
+  transform: translateX(-100%);
+  transition: transform 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+}
+.mn-drawer[data-open='true'] {
+  transform: translateX(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mn-drawer-backdrop,
+  .mn-drawer {
+    transition: none;
+  }
+}
+
+@media (min-width: 1280px) {
+  /* Sidebar is always visible at xl, drawer not needed. */
+  .mn-drawer-backdrop,
+  .mn-drawer {
+    display: none;
   }
 }
 
@@ -417,12 +456,18 @@ a {
   }
 }
 
-/* Touch-target enforcement on coarse pointers. */
+/* Touch-target enforcement on coarse pointers — but exempt the stylus
+   toolbar buttons, which are intentionally compact (30×30) chrome around
+   a Pencil-first canvas. */
 @media (hover: none) and (pointer: coarse) {
   button,
   [role='button'],
   [role='radio'] {
     min-height: 44px;
+  }
+  .mn-toolbar-btn,
+  .mn-toolbar-btn[role='button'] {
+    min-height: 30px;
   }
 }
 

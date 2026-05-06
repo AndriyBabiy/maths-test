@@ -4,14 +4,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { AssessmentReport } from '@/app/api/assessment/types';
 import { ChatPane } from './_components/ChatPane';
 import { ContentsSidebar } from './_components/ContentsSidebar';
+import { MobileTabs, type AssessmentTab } from './_components/MobileTabs';
 import { StudyPlanWizard } from './_components/study-plan/StudyPlanWizard';
 import {
   ChartGlyph,
   ClockGlyph,
   FlameGlyph,
+  MenuGlyph,
   ResetGlyph,
 } from './_components/glyphs';
-import type { PaperKind } from './_components/PenCanvas';
+import type { PaperKind, PenCanvasHandle } from './_components/PenCanvas';
 import { Button, SketchBox } from './_components/primitives';
 import { QuestionReviewCard } from './_components/QuestionReview';
 import { WorkingsPane } from './_components/WorkingsPane';
@@ -27,6 +29,7 @@ import {
   color,
   font,
   fontSize,
+  fontSizeFluid,
   fontWeight,
   radius,
   shadow,
@@ -97,8 +100,13 @@ function useSessionTimer(startMs: number | null): string {
 
 export default function AssessmentPage() {
   useRouteAttr('assessment');
-  const isMobile = useBelowBreakpoint(1024);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  // Two breakpoints drive the responsive shape:
+  //   <768  → bottom tab bar takes over, only one pane visible at a time
+  //   <1280 → sidebar lives in an off-canvas drawer behind the hamburger
+  const isPhone = useBelowBreakpoint(768);
+  const isBelowDesktop = useBelowBreakpoint(1280);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<AssessmentTab>('question');
 
   const [sessionId, setSessionId] = useState<string>(() => newSessionId());
   const [items, setItems] = useState<Question[]>(() => buildInitialState());
@@ -125,9 +133,18 @@ export default function AssessmentPage() {
   // hard cap (20) so the chat header reads "Q 1 / 20" on first paint, before
   // the API has responded.
   const [totalCap, setTotalCap] = useState(20);
+  // Length of `chat` last time the student opened the Tutor tab. Anything
+  // beyond this is "new" and lights the badge dot on the inactive tab.
+  const [tutorSeenAt, setTutorSeenAt] = useState<number>(INTRO_CHAT.length);
 
   /** When the active question was last shown — used to compute latency on submit. */
   const questionShownAt = useRef<number>(0);
+  /**
+   * Imperative handle to the scratchpad canvas. Lives on the page so chat
+   * sends can grab a PNG snapshot of the current working before posting to
+   * /api/tutor (the route then runs it through a lite vision interpreter).
+   */
+  const canvasRef = useRef<PenCanvasHandle | null>(null);
 
   const timer = useSessionTimer(startedAt);
 
@@ -152,6 +169,21 @@ export default function AssessmentPage() {
     [items],
   );
 
+  // Badge-dot signals on the bottom tab bar. Only shown on the *inactive*
+  // tab — once the student opens that tab, the dot clears.
+  const tutorUnread =
+    activeTab !== 'tutor' && chat.length > tutorSeenAt;
+  const padHasWork =
+    activeTab !== 'pad' && (activeQ?.strokes?.length ?? 0) > 0;
+
+  // On phones we render only one of {question, pad} inside the workings pane
+  // at a time. On larger viewports the pane shows the full layout regardless.
+  const mobileFocus: 'question' | 'pad' | undefined = isPhone
+    ? activeTab === 'pad'
+      ? 'pad'
+      : 'question'
+    : undefined;
+
   const setStrokes = useCallback(
     (next: Stroke[]) => {
       if (!activeQ) return;
@@ -166,6 +198,21 @@ export default function AssessmentPage() {
   useEffect(() => {
     if (activeId) questionShownAt.current = Date.now();
   }, [activeId]);
+
+  // Drawer dismissal: Escape key + auto-close when the viewport grows past
+  // the desktop threshold (the drawer is `display: none` at ≥1280, so leaving
+  // its state as `open` would re-pop on the next shrink).
+  useEffect(() => {
+    if (!drawerOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setDrawerOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [drawerOpen]);
+  useEffect(() => {
+    if (!isBelowDesktop) setDrawerOpen(false);
+  }, [isBelowDesktop]);
 
   const startAssessment = useCallback(async (sid: string) => {
     setPending(true);
@@ -230,6 +277,11 @@ export default function AssessmentPage() {
       setRibbon({ text: 'reviewing previous question', mood: 'warn' });
     }
     setTutorMood('think');
+  }
+
+  function changeTab(next: AssessmentTab) {
+    setActiveTab(next);
+    if (next === 'tutor') setTutorSeenAt(chat.length);
   }
 
   async function handleSubmit(chosenIndex: 0 | 1 | 2 | 3) {
@@ -300,7 +352,10 @@ export default function AssessmentPage() {
     const placeholderIndex = optimistic.length - 1;
     setChat(optimistic);
 
-    // Strip internal fields; the tutor must never see correctIndex or strokes.
+    // Strip internal fields; the tutor must never see correctIndex or raw
+    // strokes. The PNG capture below is sent to a separate, cheap vision
+    // interpreter on the server (not the main tutor), which produces a short
+    // textual description that gets inlined into the main tutor's prompt.
     const question =
       activeQ && activeQ.choices
         ? {
@@ -311,11 +366,17 @@ export default function AssessmentPage() {
           }
         : null;
 
+    const hasStrokes = (activeQ?.strokes?.length ?? 0) > 0;
+    const strokesPng = hasStrokes
+      ? canvasRef.current?.snapshotPng() ?? undefined
+      : undefined;
+
     const response = await apiTutor({
       sessionId,
       question,
       history: historyForPrompt,
       message: trimmed,
+      strokesPng,
     });
 
     let replyText: string;
@@ -379,23 +440,33 @@ export default function AssessmentPage() {
               overflow: 'hidden',
             }}
           >
-            {isMobile && (
+            {isBelowDesktop && (
               <button
                 type="button"
-                onClick={() => setSidebarOpen((s) => !s)}
-                aria-label="Toggle contents drawer"
-                aria-expanded={sidebarOpen}
-                className="mn-drawer-toggle"
-                style={{ padding: `${space[3]}px ${space[5]}px` }}
+                onClick={() => setDrawerOpen((o) => !o)}
+                aria-label="Open contents drawer"
+                aria-expanded={drawerOpen}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  minWidth: 44,
+                  minHeight: 44,
+                  borderRadius: radius.md,
+                  background: 'transparent',
+                  border: `1px solid ${color.border.default}`,
+                  color: color.ink.primary,
+                  cursor: 'pointer',
+                  flexShrink: 0,
+                  padding: 0,
+                }}
               >
-                <span aria-hidden style={{ fontSize: 16, lineHeight: 1 }}>
-                  ☰
-                </span>
-                <span>Contents</span>
+                <MenuGlyph size={20} ink={color.ink.primary} />
               </button>
             )}
             <div
               aria-hidden
+              className="mn-topbar-brand"
               style={{
                 width: 28,
                 height: 28,
@@ -415,6 +486,7 @@ export default function AssessmentPage() {
               M
             </div>
             <span
+              className="mn-topbar-brand"
               style={{
                 fontFamily: font.sans,
                 fontSize: fontSize.h4,
@@ -479,24 +551,26 @@ export default function AssessmentPage() {
 
         {/* Main spread — responsive grid (1 / 2 / 3 column based on viewport) */}
         <div className="mn-stage-grid">
-          {/* Sidebar — toggleable drawer below lg, always visible at lg+ */}
-          <div
-            className="mn-pane-sidebar"
-            data-hidden-mobile={isMobile && !sidebarOpen ? 'true' : 'false'}
-          >
+          {/* Sidebar — only renders in the grid at ≥1024 (rail at lg, full at xl).
+              At <1024 the same component is rendered inside the off-canvas drawer
+              below. The data-tab-active stays 'false' because the sidebar is
+              never one of the mobile bottom tabs. */}
+          <div className="mn-pane-sidebar" data-tab-active="false">
             <ContentsSidebar
               items={items}
               activeId={activeQ?.id ?? ''}
-              onPick={(id) => {
-                pickQuestion(id);
-                if (isMobile) setSidebarOpen(false);
-              }}
+              onPick={pickQuestion}
               sessionStats={sessionStats}
+              mode={isBelowDesktop ? 'rail' : 'full'}
+              onOpenDrawer={() => setDrawerOpen(true)}
             />
           </div>
 
           {/* Chat pane */}
-          <div className="mn-pane-chat">
+          <div
+            className="mn-pane-chat"
+            data-tab-active={activeTab === 'tutor' ? 'true' : 'false'}
+          >
             <ChatPane
               chat={chat}
               qIndex={qIndex}
@@ -506,8 +580,18 @@ export default function AssessmentPage() {
             />
           </div>
 
-          {/* Workings pane */}
-          <div className="mn-pane-workings">
+          {/* Workings pane — handles BOTH the Question and Pad tabs on mobile,
+              since both live inside this pane. The `mobileFocus` prop tells
+              WorkingsPane whether to render only the question card + choices
+              (Question tab) or only the canvas + toolbar (Pad tab). */}
+          <div
+            className="mn-pane-workings"
+            data-tab-active={
+              activeTab === 'question' || activeTab === 'pad'
+                ? 'true'
+                : 'false'
+            }
+          >
             {activeQ ? (
               <WorkingsPane
                 activeQ={activeQ}
@@ -522,6 +606,8 @@ export default function AssessmentPage() {
                 penColor={penColor}
                 setPenColor={setPenColor}
                 pending={pending}
+                canvasRef={canvasRef}
+                mobileFocus={mobileFocus}
               />
             ) : (
               <WorkingsPlaceholder pending={pending} ribbon={ribbon} />
@@ -592,15 +678,53 @@ export default function AssessmentPage() {
           )}
         </div>
 
+        {/* Mobile bottom tab bar — hidden ≥768 via CSS. Lives inside .mn-stage
+            so it sits below the grid and above the footer, but the footer is
+            also hidden at <768, so on phones the tab bar is the bottom-most
+            chrome (with iOS safe-area padding from the .mn-tabbar rule). */}
+        <MobileTabs
+          active={activeTab}
+          onChange={changeTab}
+          tutorUnread={tutorUnread}
+          padHasWork={padHasWork}
+        />
+
         {/* Footer */}
         <div className="mn-footer">
-          <span>
+          <span suppressHydrationWarning>
             session {sessionId.slice(0, 8)} · {sessionStats.done} answered ·{' '}
             {pending ? 'agent thinking…' : 'your turn'}
           </span>
           <span>Stylus + mouse · pressure-aware canvas</span>
         </div>
       </div>
+
+      {/* Off-canvas contents drawer — visible <1280 only (CSS hides at xl).
+          Renders the same ContentsSidebar as the in-grid pane, but `onPick`
+          closes the drawer once a question is chosen. */}
+      <div
+        className="mn-drawer-backdrop"
+        data-open={drawerOpen}
+        onClick={() => setDrawerOpen(false)}
+        aria-hidden
+      />
+      <aside
+        className="mn-drawer"
+        data-open={drawerOpen}
+        aria-label="Contents drawer"
+        aria-hidden={!drawerOpen}
+      >
+        <ContentsSidebar
+          items={items}
+          activeId={activeQ?.id ?? ''}
+          onPick={(id) => {
+            pickQuestion(id);
+            setDrawerOpen(false);
+          }}
+          sessionStats={sessionStats}
+          mode="drawer"
+        />
+      </aside>
     </div>
   );
 }
@@ -624,7 +748,7 @@ function Stat({
         gap: space[3],
         whiteSpace: 'nowrap',
         fontFamily: font.sans,
-        fontSize: fontSize.body,
+        fontSize: fontSizeFluid.body,
       }}
     >
       {icon}
@@ -632,9 +756,10 @@ function Stat({
         {value}
       </span>
       <span
+        className="mn-stat-label"
         style={{
           color: color.ink.faint,
-          fontSize: fontSize.tiny,
+          fontSize: fontSizeFluid.tiny,
           textTransform: 'uppercase',
           letterSpacing: '0.06em',
           fontWeight: fontWeight.medium,

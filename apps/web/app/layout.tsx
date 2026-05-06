@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import type { Viewport } from 'next';
 import 'katex/dist/katex.min.css';
 import './globals.css';
 
@@ -6,6 +7,13 @@ export const metadata = {
   title: 'Math Notebook · Adaptive Assessment',
   description:
     'Adaptive Project Maths assessment — clean, modern, AI-tutored.',
+};
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
+  themeColor: '#fafafa',
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

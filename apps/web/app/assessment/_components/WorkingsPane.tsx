@@ -1,10 +1,11 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import {
   color,
   font,
   fontSize,
+  fontSizeFluid,
   fontWeight,
   motion as motionTokens,
   radius,
@@ -45,6 +46,20 @@ interface WorkingsPaneProps {
   penColor: string;
   setPenColor: (next: string) => void;
   pending: boolean;
+  /**
+   * Imperative handle to the underlying PenCanvas. Owned by the parent page
+   * (so chat sends can grab a PNG snapshot for the tutor pipeline) but the
+   * pane wires the toolbar buttons (undo, zoom, reset, snapshot) to it.
+   */
+  canvasRef: React.RefObject<PenCanvasHandle | null>;
+  /**
+   * On phones (<768px) the workings pane lives behind two bottom tabs:
+   *   'question' — show the prompt + multiple-choice + hint (no canvas)
+   *   'pad'      — show the toolbar + full-bleed canvas (no choices)
+   * Above 768px this prop stays `undefined` and the pane renders both
+   * sections stacked, exactly as it always has on desktop and tablet.
+   */
+  mobileFocus?: 'question' | 'pad';
 }
 
 const PEN_COLORS = [
@@ -97,16 +112,22 @@ export function WorkingsPane({
   penColor,
   setPenColor,
   pending,
+  canvasRef,
+  mobileFocus,
 }: WorkingsPaneProps) {
   const [tool, setTool] = useState<CanvasTool>('pen');
   const [strokeWidth, setStrokeWidth] = useState<number>(1.6);
   const [zoom, setZoom] = useState<number>(1);
-  const canvasRef = useRef<PenCanvasHandle | null>(null);
 
   const isDone = activeQ.state === 'done';
   const choices = activeQ.choices ?? null;
   const cyclePaper = () =>
     setPaper(paper === 'rule' ? 'grid' : paper === 'grid' ? 'dot' : 'rule');
+
+  // On phones the bottom tab bar splits this pane into two sub-views.
+  // Above 768px both are shown together (current desktop layout).
+  const showQuestion = mobileFocus !== 'pad';
+  const showPad = mobileFocus !== 'question';
 
   return (
     <div
@@ -120,6 +141,8 @@ export function WorkingsPane({
         background: color.bg.surface,
       }}
     >
+      {showQuestion && (
+        <>
       {/* Question card */}
       <SketchBox
         elevation="sm"
@@ -156,7 +179,7 @@ export function WorkingsPane({
         <div
           style={{
             fontFamily: font.sans,
-            fontSize: fontSize.h3,
+            fontSize: fontSizeFluid.h3,
             fontWeight: fontWeight.regular,
             color: color.ink.primary,
             lineHeight: 1.5,
@@ -250,7 +273,11 @@ export function WorkingsPane({
           </span>
         </div>
       )}
+        </>
+      )}
 
+      {showPad && (
+        <>
       {/* Tools row — chrome around the canvas. The user-select/touch-callout
           properties block iOS Safari from popping the native Copy/Look-Up menu
           when an Apple Pencil hovers over these buttons. */}
@@ -258,7 +285,7 @@ export function WorkingsPane({
         style={{
           display: 'flex',
           alignItems: 'center',
-          gap: space[3],
+          gap: space[2],
           padding: `${space[4]}px 0`,
           borderTop: `1px solid ${color.border.subtle}`,
           flexWrap: 'wrap',
@@ -274,9 +301,9 @@ export function WorkingsPane({
           ariaPressed={tool === 'pen'}
           onClick={() => setTool('pen')}
           ariaLabel="Pen tool"
+          title="Pen"
         >
           <PencilGlyph size={14} />
-          <span>Pen</span>
         </SketchBtn>
         <SketchBtn
           small
@@ -285,18 +312,18 @@ export function WorkingsPane({
           ariaPressed={tool === 'erase'}
           onClick={() => setTool('erase')}
           ariaLabel="Eraser tool"
+          title="Erase"
         >
           <EraserGlyph size={14} />
-          <span>Erase</span>
         </SketchBtn>
         <SketchBtn
           small
           variant="ghost"
           onClick={() => canvasRef.current?.undo()}
           ariaLabel="Undo last stroke"
+          title="Undo"
         >
           <UndoGlyph size={14} />
-          <span>Undo</span>
         </SketchBtn>
 
         {/* Stroke-width selector */}
@@ -307,7 +334,7 @@ export function WorkingsPane({
             display: 'flex',
             gap: space[2],
             alignItems: 'center',
-            paddingLeft: space[3],
+            paddingLeft: space[2],
             marginLeft: space[2],
             borderLeft: `1px solid ${color.border.subtle}`,
             height: 30,
@@ -366,7 +393,7 @@ export function WorkingsPane({
             display: 'flex',
             gap: space[2],
             alignItems: 'center',
-            paddingLeft: space[3],
+            paddingLeft: space[2],
             marginLeft: space[2],
             borderLeft: `1px solid ${color.border.subtle}`,
             height: 30,
@@ -404,13 +431,14 @@ export function WorkingsPane({
 
         <div style={{ flex: 1 }} />
 
-        {/* Zoom controls */}
+        {/* Zoom controls — the percent chip only renders when zoom !== 1 so the
+            row stays tight at the default 100%. Click the chip to reset. */}
         <div
           style={{
             display: 'flex',
             gap: space[2],
             alignItems: 'center',
-            paddingRight: space[3],
+            paddingRight: space[2],
             marginRight: space[2],
             borderRight: `1px solid ${color.border.subtle}`,
             height: 30,
@@ -427,28 +455,29 @@ export function WorkingsPane({
               −
             </span>
           </SketchBtn>
-          <button
-            type="button"
-            onClick={() => canvasRef.current?.resetView()}
-            title="Reset view (100%)"
-            aria-label="Reset view to 100%"
-            style={{
-              minWidth: 52,
-              height: 24,
-              padding: `0 ${space[2]}px`,
-              borderRadius: radius.sm,
-              border: `1px solid ${color.border.default}`,
-              background: color.bg.surface,
-              cursor: 'pointer',
-              fontFamily: font.sans,
-              fontSize: fontSize.tiny,
-              fontWeight: fontWeight.medium,
-              color: color.ink.secondary,
-              fontVariantNumeric: 'tabular-nums',
-            }}
-          >
-            {Math.round(zoom * 100)}%
-          </button>
+          {zoom !== 1 && (
+            <button
+              type="button"
+              onClick={() => canvasRef.current?.resetView()}
+              title="Reset view (100%)"
+              aria-label="Reset view to 100%"
+              style={{
+                height: 24,
+                padding: `0 ${space[2]}px`,
+                borderRadius: radius.sm,
+                border: `1px solid ${color.border.default}`,
+                background: color.bg.surface,
+                cursor: 'pointer',
+                fontFamily: font.sans,
+                fontSize: fontSize.tiny,
+                fontWeight: fontWeight.medium,
+                color: color.ink.secondary,
+                fontVariantNumeric: 'tabular-nums',
+              }}
+            >
+              {Math.round(zoom * 100)}%
+            </button>
+          )}
           <SketchBtn
             small
             variant="ghost"
@@ -474,7 +503,6 @@ export function WorkingsPane({
           ) : (
             <SquiggleGlyph size={14} />
           )}
-          <span>{PAPER_LABEL[paper]}</span>
         </SketchBtn>
         <SketchBtn
           small
@@ -517,6 +545,8 @@ export function WorkingsPane({
           onZoomChange={setZoom}
         />
       </div>
+        </>
+      )}
     </div>
   );
 }
