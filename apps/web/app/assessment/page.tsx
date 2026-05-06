@@ -608,6 +608,7 @@ export default function AssessmentPage() {
                 pending={pending}
                 canvasRef={canvasRef}
                 mobileFocus={mobileFocus}
+                touchDraws={isPhone}
               />
             ) : (
               <WorkingsPlaceholder pending={pending} ribbon={ribbon} />

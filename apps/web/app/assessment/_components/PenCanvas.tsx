@@ -46,6 +46,12 @@ interface PenCanvasProps {
   ref?: Ref<PenCanvasHandle>;
   /** Reports zoom changes upward so the toolbar can show a percentage. */
   onZoomChange?: (zoom: number) => void;
+  /**
+   * When true, single-finger touch starts a stroke (phone mode — finger is the
+   * only input). When false (default), single-finger touch pans the view to
+   * preserve palm rejection for Apple Pencil users on iPad.
+   */
+  touchDraws?: boolean;
 }
 
 const MIN_ZOOM = 0.25;
@@ -65,10 +71,15 @@ function clamp(v: number, lo: number, hi: number): number {
  *
  * Pointer routing:
  *   - `pen` / `mouse` → draw (mouse pans on shift+drag or middle-button)
- *   - `touch`         → pan (1 finger) or pinch-zoom (2 fingers); never draws
+ *   - `touch`         → behavior depends on `touchDraws`:
+ *                       false (default, iPad+Pencil): 1 finger pans, 2 fingers
+ *                         pinch-zoom; never draws (palm rejection).
+ *                       true  (phone, no stylus): 1 finger draws, 2 fingers
+ *                         pinch + pan.
  *
- * This mirrors iPadOS Notes / Procreate so that a palm resting on the screen
+ * The default mirrors iPadOS Notes / Procreate so a palm resting on the screen
  * never accidentally produces strokes when the learner is using an Apple Pencil.
+ * On phones we flip to draw-on-touch because finger is the only available input.
  */
 export function PenCanvas({
   width,
@@ -82,6 +93,7 @@ export function PenCanvas({
   paperColor = '#fdfbf3',
   ref,
   onZoomChange,
+  touchDraws = false,
 }: PenCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [current, setCurrent] = useState<Stroke | null>(null);
@@ -251,8 +263,8 @@ export function PenCanvas({
   );
 
   function down(e: ReactPointerEvent<HTMLCanvasElement>) {
-    // Touch events go through the pan/pinch path so palm contact never produces
-    // strokes when the learner is drawing with an Apple Pencil.
+    // Touch events branch on `touchDraws`. The 2-finger path is identical
+    // either way (pinch + pan); only single-finger differs.
     if (e.pointerType === 'touch') {
       touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (touches.current.size === 2) {
@@ -268,9 +280,25 @@ export function PenCanvas({
           pan,
           zoom,
         };
-        // Abort any half-finished stroke if a second finger lands.
+        // Abort any half-finished stroke if a second finger lands. Critical
+        // for the phone path: the user might land 2 fingers in quick succession
+        // intending to pinch — we don't want the brief 1-finger window to
+        // commit a tiny stroke.
         drawing.current = false;
         setCurrent(null);
+      } else if (touches.current.size === 1 && touchDraws) {
+        // Phone path: single finger starts a stroke. Mirror the pen primary
+        // path below — capture the pointer so the stroke continues if the
+        // finger drifts off the canvas edge.
+        e.preventDefault();
+        canvasRef.current?.setPointerCapture(e.pointerId);
+        drawing.current = true;
+        setCurrent({
+          tool,
+          color: tool === 'erase' ? '#ffffff' : color,
+          stroke,
+          points: [pt(e)],
+        });
       }
       return;
     }
@@ -327,10 +355,27 @@ export function PenCanvas({
             (pinchStart.current.midY - pinchStart.current.pan.y) * ratio,
         });
       } else if (touches.current.size === 1) {
-        // Single-finger pan.
-        const dx = e.clientX - prev.x;
-        const dy = e.clientY - prev.y;
-        setPan((p) => ({ x: p.x + dx, y: p.y + dy }));
+        if (touchDraws && drawing.current) {
+          // Phone path: single finger continues the stroke. Mirror the pen
+          // path below — append a point and run the eraser hit-test in
+          // canvas-space.
+          const p = pt(e);
+          setCurrent((c) => (c ? { ...c, points: [...c.points, p] } : c));
+          if (tool === 'erase') {
+            const r = 16 / zoom;
+            onStrokesChange?.(
+              strokes.filter(
+                (s) =>
+                  !s.points.some((q) => Math.hypot(q.x - p.x, q.y - p.y) < r),
+              ),
+            );
+          }
+        } else {
+          // iPad-with-Pencil path: single-finger pan.
+          const dx = e.clientX - prev.x;
+          const dy = e.clientY - prev.y;
+          setPan((p) => ({ x: p.x + dx, y: p.y + dy }));
+        }
       }
       return;
     }
@@ -363,6 +408,18 @@ export function PenCanvas({
     if (e.pointerType === 'touch') {
       touches.current.delete(e.pointerId);
       if (touches.current.size < 2) pinchStart.current = null;
+      // Phone path: if this touch was drawing a stroke, finalize it. Mirrors
+      // the pen finalize block below. `drawing.current` is only true here when
+      // touchDraws was on AND the stroke wasn't aborted by a 2nd finger.
+      if (drawing.current) {
+        drawing.current = false;
+        setCurrent((c) => {
+          if (c && c.tool !== 'erase' && c.points.length > 1) {
+            onStrokesChange?.([...strokes, c]);
+          }
+          return null;
+        });
+      }
       return;
     }
     if (mousePan.current) {
@@ -431,6 +488,7 @@ interface PenCanvasAutoProps {
   stroke?: number;
   canvasRef?: Ref<PenCanvasHandle>;
   onZoomChange?: (zoom: number) => void;
+  touchDraws?: boolean;
 }
 
 export function PenCanvasAuto({
@@ -443,6 +501,7 @@ export function PenCanvasAuto({
   stroke,
   canvasRef,
   onZoomChange,
+  touchDraws,
 }: PenCanvasAutoProps) {
   const wrap = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -485,6 +544,7 @@ export function PenCanvasAuto({
           paperColor={paperColor}
           stroke={stroke}
           onZoomChange={onZoomChange}
+          touchDraws={touchDraws}
         />
       )}
     </div>

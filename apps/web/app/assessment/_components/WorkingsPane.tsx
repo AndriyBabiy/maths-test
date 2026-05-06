@@ -60,6 +60,12 @@ interface WorkingsPaneProps {
    * sections stacked, exactly as it always has on desktop and tablet.
    */
   mobileFocus?: 'question' | 'pad';
+  /**
+   * Forwarded to PenCanvas. When true (phones, <768px), single-finger touch
+   * draws and two-finger touch pinches/pans. When false/undefined (iPad and
+   * up), single-finger touch pans for Apple Pencil palm rejection.
+   */
+  touchDraws?: boolean;
 }
 
 const PEN_COLORS = [
@@ -114,6 +120,7 @@ export function WorkingsPane({
   pending,
   canvasRef,
   mobileFocus,
+  touchDraws,
 }: WorkingsPaneProps) {
   const [tool, setTool] = useState<CanvasTool>('pen');
   const [strokeWidth, setStrokeWidth] = useState<number>(1.6);
@@ -543,6 +550,7 @@ export function WorkingsPane({
           paperColor="#fdfbf3"
           stroke={strokeWidth}
           onZoomChange={setZoom}
+          touchDraws={touchDraws}
         />
       </div>
         </>
