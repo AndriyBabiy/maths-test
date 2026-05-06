@@ -5,6 +5,7 @@ export type {
   Item,
   SessionState,
   AssessmentReport,
+  AttemptRecord,
   Recommendation,
 } from './types';
 
@@ -14,6 +15,7 @@ export type {
   StudyWeek,
   StrandPriority,
   StudyPlan,
+  IncorrectItemRecap,
 } from './study-plan-types';
 
 export { RaschEngine, K_FACTOR } from './rasch-engine';

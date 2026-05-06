@@ -21,6 +21,12 @@ export interface TutorTurn {
 
 export interface TutorRequest {
   sessionId: string;
+  /**
+   * PostHog `distinct_id` from the browser. Lets server-side `$ai_generation`
+   * events join the same person record as client-side product events. Optional
+   * because analytics is supplementary — the route still works without it.
+   */
+  distinctId?: string;
   /** `null` when the chat opens before the first question loads. */
   question: TutorQuestion | null;
   /** Recent conversation window (client-side cap is ~10). */

@@ -5,7 +5,14 @@
  * `AssessmentReport`. The LLM has no role here; natural-language
  * commentary lives outside.
  */
-import type { AssessmentReport, SessionState, Stage, Strand, Tier } from './types';
+import type {
+  AssessmentReport,
+  AttemptRecord,
+  SessionState,
+  Stage,
+  Strand,
+  Tier,
+} from './types';
 import { RaschEngine } from './rasch-engine';
 import { ITEMS } from './items';
 
@@ -93,6 +100,29 @@ export function buildReport(state: SessionState): AssessmentReport {
     `focus next on ${weakStrand} (theta=${state.theta[weakStrand].toFixed(2)}).` +
     gapBlurb;
 
+  // Reconstruct full per-question records from the history + item bank.
+  // The history stores only IDs to keep state compact; we hydrate here so the
+  // UI and study-plan agent can show questions, choices, and the learner's
+  // selection without holding the full Item shape in graph state.
+  const attempts: AttemptRecord[] = state.history.flatMap((turn) => {
+    const item = ITEMS_BY_ID.get(turn.itemId);
+    if (!item) return [];
+    return [
+      {
+        itemId: item.id,
+        text: item.text,
+        choices: item.choices,
+        correctIndex: item.correctIndex,
+        chosenIndex: turn.chosenIndex ?? null,
+        correct: turn.correct,
+        latencyMs: turn.latencyMs,
+        strand: item.strand,
+        learningOutcome: item.learningOutcome,
+        b: item.b,
+      },
+    ];
+  });
+
   return {
     stage,
     overallTier,
@@ -100,5 +130,6 @@ export function buildReport(state: SessionState): AssessmentReport {
     strengths: Array.from(strengths),
     gaps: Array.from(gaps),
     nextSteps,
+    attempts,
   };
 }

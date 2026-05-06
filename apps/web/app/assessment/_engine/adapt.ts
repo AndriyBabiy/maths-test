@@ -134,6 +134,7 @@ export async function assessAndAdapt(
     advanceTo: existing ? existing.id : newQ.id,
     correct,
     inserted,
+    cap: response.progress.cap,
   };
 }
 

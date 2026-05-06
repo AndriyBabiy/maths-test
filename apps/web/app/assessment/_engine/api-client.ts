@@ -5,7 +5,13 @@
  *
  * Errors are mapped to a typed `{ kind: 'error' }` shape so callers can
  * pattern-match without `try/catch` plumbing.
+ *
+ * Every request includes the PostHog `distinct_id` from the browser when
+ * available — that lets server-side `$ai_generation` events join the same
+ * person record as client product events. PostHog is loaded lazily (and may
+ * be ad-blocked), so the lookup is best-effort.
  */
+import posthog from 'posthog-js';
 import type {
   AssessmentResponse,
   PublicItem,
@@ -15,6 +21,21 @@ import type { Question, QuestionState } from './types';
 
 const ENDPOINT = '/api/assessment';
 const TUTOR_ENDPOINT = '/api/tutor';
+
+/**
+ * Read PostHog's anonymous distinctId off the global singleton. Returns
+ * undefined when PostHog isn't initialised yet (env key missing, ad-blocker)
+ * or when called during SSR.
+ */
+function getDistinctId(): string | undefined {
+  if (typeof window === 'undefined') return undefined;
+  try {
+    const id = posthog.get_distinct_id?.();
+    return typeof id === 'string' && id ? id : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 async function postAssessment(body: unknown): Promise<AssessmentResponse> {
   try {
@@ -34,7 +55,11 @@ async function postAssessment(body: unknown): Promise<AssessmentResponse> {
 }
 
 export function apiStart(sessionId: string): Promise<AssessmentResponse> {
-  return postAssessment({ kind: 'start', sessionId });
+  return postAssessment({
+    kind: 'start',
+    sessionId,
+    distinctId: getDistinctId(),
+  });
 }
 
 export function apiAnswer(args: {
@@ -43,11 +68,15 @@ export function apiAnswer(args: {
   chosenIndex: 0 | 1 | 2 | 3;
   latencyMs: number;
 }): Promise<AssessmentResponse> {
-  return postAssessment({ kind: 'answer', ...args });
+  return postAssessment({ kind: 'answer', ...args, distinctId: getDistinctId() });
 }
 
 export function apiFinalise(sessionId: string): Promise<AssessmentResponse> {
-  return postAssessment({ kind: 'finalise', sessionId });
+  return postAssessment({
+    kind: 'finalise',
+    sessionId,
+    distinctId: getDistinctId(),
+  });
 }
 
 /**
@@ -59,7 +88,7 @@ export async function apiTutor(req: TutorRequest): Promise<TutorResponse> {
     const res = await fetch(TUTOR_ENDPOINT, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(req),
+      body: JSON.stringify({ ...req, distinctId: req.distinctId ?? getDistinctId() }),
     });
     const json = (await res.json()) as TutorResponse;
     return json;

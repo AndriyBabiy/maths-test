@@ -18,6 +18,8 @@
     "ai": "^4.0.0",
     "katex": "^0.16.11",
     "next": "^15.0.0",
+    "posthog-js": "^1.220.0",
+    "posthog-node": "^4.10.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-katex": "^3.0.1",

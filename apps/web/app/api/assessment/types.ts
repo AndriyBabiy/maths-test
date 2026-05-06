@@ -33,6 +33,25 @@ export interface Item {
 /** Item shape sent to the UI. `correctIndex` is stripped server-side. */
 export type PublicItem = Omit<Item, 'correctIndex'>;
 
+/**
+ * Full per-question record carried back on the final report. Populated by
+ * `buildReport()` from `SessionState.history` + the item bank. Drives both
+ * the per-question review panel in the UI and the study-plan agent's
+ * remediation-of-incorrect-items path.
+ */
+export interface AttemptRecord {
+  itemId: string;
+  text: string;
+  choices: [string, string, string, string];
+  correctIndex: 0 | 1 | 2 | 3;
+  chosenIndex: 0 | 1 | 2 | 3 | null;
+  correct: boolean;
+  latencyMs: number;
+  strand: Strand;
+  learningOutcome: string;
+  b: number;
+}
+
 export interface AssessmentReport {
   stage: Stage;
   overallTier: Tier;
@@ -40,19 +59,25 @@ export interface AssessmentReport {
   strengths: string[];
   gaps: string[];
   nextSteps: string;
+  attempts: AttemptRecord[];
 }
 
-/** Tagged-union request body. */
+/**
+ * Tagged-union request body. `distinctId` is the PostHog `distinct_id` from
+ * the browser — optional because analytics is supplementary, not required for
+ * the assessment to function.
+ */
 export type AssessmentRequest =
-  | { kind: 'start'; sessionId: string }
+  | { kind: 'start'; sessionId: string; distinctId?: string }
   | {
       kind: 'answer';
       sessionId: string;
+      distinctId?: string;
       itemId: string;
       chosenIndex: 0 | 1 | 2 | 3;
       latencyMs: number;
     }
-  | { kind: 'finalise'; sessionId: string };
+  | { kind: 'finalise'; sessionId: string; distinctId?: string };
 
 /** Tagged-union response body. */
 export type AssessmentResponse =

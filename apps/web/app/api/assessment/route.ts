@@ -7,6 +7,7 @@
  */
 import { type NextRequest, NextResponse } from 'next/server';
 import { clientIp, rateLimit } from '../_lib/rate-limit';
+import { capture } from '../_lib/posthog-server';
 import type {
   AssessmentRequest,
   AssessmentResponse,
@@ -40,11 +41,14 @@ function parseAssessmentRequest(
   const sessionId = typeof r.sessionId === 'string' ? r.sessionId : '';
   if (!sessionId) return { ok: false, error: 'sessionId required' };
 
+  const distinctId =
+    typeof r.distinctId === 'string' && r.distinctId ? r.distinctId : undefined;
+
   if (r.kind === 'start') {
-    return { ok: true, value: { kind: 'start', sessionId } };
+    return { ok: true, value: { kind: 'start', sessionId, distinctId } };
   }
   if (r.kind === 'finalise') {
-    return { ok: true, value: { kind: 'finalise', sessionId } };
+    return { ok: true, value: { kind: 'finalise', sessionId, distinctId } };
   }
   if (r.kind === 'answer') {
     const itemId = typeof r.itemId === 'string' ? r.itemId : '';
@@ -59,7 +63,7 @@ function parseAssessmentRequest(
     }
     return {
       ok: true,
-      value: { kind: 'answer', sessionId, itemId, chosenIndex, latencyMs },
+      value: { kind: 'answer', sessionId, distinctId, itemId, chosenIndex, latencyMs },
     };
   }
   return { ok: false, error: `unknown kind: ${String(r.kind)}` };
@@ -108,9 +112,22 @@ export async function POST(req: NextRequest): Promise<Response> {
     return errorResponse('Request body is not valid JSON.', 400);
   }
 
+  // PostHog distinctId from the browser when available; sessionId is the
+  // stable fallback. Both are passed into the LangGraph agent's `configurable`
+  // so the LLM `$ai_generation` event lines up with the product event.
+  const phDistinctId = body.distinctId ?? body.sessionId;
+
   try {
     if (body.kind === 'start') {
-      const { item, asked, commentary } = await startAssessment(body.sessionId);
+      capture({
+        distinctId: phDistinctId,
+        event: 'assessment_started',
+        properties: { assessment_session_id: body.sessionId },
+      });
+      const { item, asked, commentary } = await startAssessment(
+        body.sessionId,
+        body.distinctId,
+      );
       return NextResponse.json<AssessmentResponse>({
         kind: 'next_item',
         item: toPublicItem(item),
@@ -120,6 +137,19 @@ export async function POST(req: NextRequest): Promise<Response> {
 
     if (body.kind === 'answer') {
       const result = await answerAssessment(body);
+      capture({
+        distinctId: phDistinctId,
+        event: 'question_answered',
+        properties: {
+          assessment_session_id: body.sessionId,
+          item_id: body.itemId,
+          chosen_index: body.chosenIndex,
+          latency_ms: body.latencyMs,
+          last_correct: result.lastCorrect,
+          // Useful for funnel analysis: did this answer end the assessment?
+          flow_outcome: result.kind, // 'next_item' | 'report'
+        },
+      });
       if (result.kind === 'next_item') {
         return NextResponse.json<AssessmentResponse>({
           kind: 'next_item',
@@ -132,6 +162,16 @@ export async function POST(req: NextRequest): Promise<Response> {
           },
         });
       }
+      capture({
+        distinctId: phDistinctId,
+        event: 'assessment_completed',
+        properties: {
+          assessment_session_id: body.sessionId,
+          overall_tier: result.report.overallTier,
+          stage: result.report.stage,
+          flow: 'auto_finalised_after_answer',
+        },
+      });
       return NextResponse.json<AssessmentResponse>({
         kind: 'report',
         report: result.report,
@@ -141,7 +181,20 @@ export async function POST(req: NextRequest): Promise<Response> {
     }
 
     // body.kind === 'finalise'
-    const { report, commentary } = await finaliseAssessment(body.sessionId);
+    const { report, commentary } = await finaliseAssessment(
+      body.sessionId,
+      body.distinctId,
+    );
+    capture({
+      distinctId: phDistinctId,
+      event: 'assessment_completed',
+      properties: {
+        assessment_session_id: body.sessionId,
+        overall_tier: report.overallTier,
+        stage: report.stage,
+        flow: 'manual_finalise',
+      },
+    });
     return NextResponse.json<AssessmentResponse>({
       kind: 'report',
       report,
@@ -151,6 +204,15 @@ export async function POST(req: NextRequest): Promise<Response> {
   } catch (err) {
     const detail = err instanceof Error ? err.message : 'unknown error';
     console.error('[assessment] handler error', detail);
+    capture({
+      distinctId: phDistinctId,
+      event: 'assessment_error',
+      properties: {
+        assessment_session_id: body.sessionId,
+        kind: body.kind,
+        error: detail,
+      },
+    });
     return errorResponse(`Assessment agent failed: ${detail}`, 502);
   }
 }

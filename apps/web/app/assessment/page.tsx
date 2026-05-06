@@ -13,6 +13,7 @@ import {
 } from './_components/glyphs';
 import type { PaperKind } from './_components/PenCanvas';
 import { Button, SketchBox } from './_components/primitives';
+import { QuestionReviewCard } from './_components/QuestionReview';
 import { WorkingsPane } from './_components/WorkingsPane';
 import { assessAndAdapt } from './_engine/adapt';
 import {
@@ -48,12 +49,6 @@ const INTRO_CHAT: ChatMessage[] = [
     text: "I'll pick each question based on how the last one went — work it out on the right pad, then tap A/B/C/D when you're ready.",
   },
 ];
-
-/** Heuristic: hint-flavoured messages get the offline fallback when the LLM is down. */
-function isHintRequest(text: string): boolean {
-  const t = text.toLowerCase();
-  return t.includes('hint') || t.includes('stuck') || t.includes('help');
-}
 
 function newSessionId(): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -126,6 +121,10 @@ export default function AssessmentPage() {
   const [studyPlanOpen, setStudyPlanOpen] = useState(false);
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [hintLevels, setHintLevels] = useState<HintLevels>({});
+  // Mirrors `progress.cap` from the assessment route. Default to the engine's
+  // hard cap (20) so the chat header reads "Q 1 / 20" on first paint, before
+  // the API has responded.
+  const [totalCap, setTotalCap] = useState(20);
 
   /** When the active question was last shown — used to compute latency on submit. */
   const questionShownAt = useRef<number>(0);
@@ -203,6 +202,7 @@ export default function AssessmentPage() {
     setItems([firstQ]);
     setActiveId(firstQ.id);
     setStartedAt(Date.now());
+    setTotalCap(response.progress.cap);
     setChat((c) => [
       ...c,
       {
@@ -242,6 +242,7 @@ export default function AssessmentPage() {
     });
 
     setItems(result.items);
+    if (result.cap !== undefined) setTotalCap(result.cap);
     setRibbon({ text: result.ribbon, mood: result.mood });
     setTutorMood(
       result.correct === true
@@ -320,9 +321,10 @@ export default function AssessmentPage() {
     let replyText: string;
     if (response.kind === 'reply') {
       replyText = response.text;
-    } else if (activeQ && isHintRequest(trimmed)) {
-      // LLM unavailable but the student asked for help — degrade to the
-      // hand-authored progressive hint library so chat keeps moving.
+    } else if (activeQ) {
+      // LLM unreachable but a question is on screen — degrade to the
+      // hand-authored progressive hint library so chat keeps moving for
+      // any kind of student message, not just hint-shaped ones.
       const nextLevel = (hintLevels[activeQ.id] ?? 0) + 1;
       setHintLevels((prev) => ({ ...prev, [activeQ.id]: nextLevel }));
       replyText = getProgressiveHint(activeQ, nextLevel, activeQ.hint);
@@ -498,7 +500,7 @@ export default function AssessmentPage() {
             <ChatPane
               chat={chat}
               qIndex={qIndex}
-              total={visibleItems.length}
+              total={totalCap}
               tutorMood={tutorMood}
               onSend={handleChatSend}
             />
@@ -575,6 +577,7 @@ export default function AssessmentPage() {
           {report && !studyPlanOpen && (
             <ReportOverlay
               report={report}
+              items={items}
               onClose={() => setReport(null)}
               onReset={reset}
               onCreatePlan={() => setStudyPlanOpen(true)}
@@ -583,6 +586,7 @@ export default function AssessmentPage() {
           {report && studyPlanOpen && (
             <StudyPlanWizard
               report={report}
+              sessionId={sessionId}
               onClose={() => setStudyPlanOpen(false)}
             />
           )}
@@ -718,16 +722,28 @@ function WorkingsPlaceholder({
 
 function ReportOverlay({
   report,
+  items,
   onClose,
   onReset,
   onCreatePlan,
 }: {
   report: AssessmentReport;
+  items: Question[];
   onClose: () => void;
   onReset: () => void;
   onCreatePlan: () => void;
 }) {
   const strands = Object.entries(report.strands);
+  // Strokes live only on the client (the report payload doesn't carry them),
+  // so we look them up by attempt id. Either Question.itemId (when the item
+  // came from the API) or Question.id (the canonical id) can match — items
+  // built by `publicItemToQuestion` keep the two in sync.
+  const strokesFor = (attemptItemId: string): Stroke[] => {
+    const q = items.find(
+      (it) => it.itemId === attemptItemId || it.id === attemptItemId,
+    );
+    return q?.strokes ?? [];
+  };
   return (
     <div
       role="dialog"
@@ -848,6 +864,46 @@ function ReportOverlay({
           <div style={summaryRow}>
             <span style={summaryLabel}>Next steps</span>
             <span>{report.nextSteps}</span>
+          </div>
+        )}
+        {report.attempts.length > 0 && (
+          <div style={{ marginTop: space[8] }}>
+            <div
+              style={{
+                fontSize: fontSize.h4,
+                fontWeight: fontWeight.semibold,
+                letterSpacing: '-0.01em',
+                marginBottom: space[2],
+              }}
+            >
+              Your answers
+            </div>
+            <div
+              style={{
+                fontSize: fontSize.small,
+                color: color.ink.muted,
+                marginBottom: space[5],
+              }}
+            >
+              Each question, your pick, the correct option, and a sketch of the
+              working you did on the right pad.
+            </div>
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: space[5],
+              }}
+            >
+              {report.attempts.map((attempt, i) => (
+                <QuestionReviewCard
+                  key={attempt.itemId}
+                  attempt={attempt}
+                  strokes={strokesFor(attempt.itemId)}
+                  index={i}
+                />
+              ))}
+            </div>
           </div>
         )}
         <div

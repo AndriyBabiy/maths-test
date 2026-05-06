@@ -13,6 +13,7 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { pdf } from '@react-pdf/renderer';
+import posthog from 'posthog-js';
 import type {
   AssessmentReport,
   Strand,
@@ -55,9 +56,11 @@ const TIER_OPTIONS: { id: Tier; label: string; blurb: string }[] = [
 interface Props {
   report: AssessmentReport;
   onClose: () => void;
+  /** Assessment sessionId — forwarded for analytics correlation. */
+  sessionId?: string;
 }
 
-export function StudyPlanWizard({ report, onClose }: Props) {
+export function StudyPlanWizard({ report, onClose, sessionId }: Props) {
   const [step, setStep] = useState<Step>('form');
   const [error, setError] = useState<string | null>(null);
   const [plan, setPlan] = useState<StudyPlan | null>(null);
@@ -87,7 +90,33 @@ export function StudyPlanWizard({ report, onClose }: Props) {
     setStep('loading');
     setError(null);
     try {
-      const body: { report: AssessmentReport; input: StudyPlanInput } = {
+      const distinctId =
+        typeof window !== 'undefined'
+          ? (() => {
+              try {
+                return posthog.get_distinct_id?.();
+              } catch {
+                return undefined;
+              }
+            })()
+          : undefined;
+      try {
+        posthog.capture('study_plan_form_submitted', {
+          assessment_session_id: sessionId,
+          goal_tier: goalTier,
+          weekly_hours: weeklyHours,
+          target_date: targetDate,
+          focus_strands_count: focusStrands.length,
+        });
+      } catch {
+        // posthog may be ad-blocked / unloaded; never crash the form
+      }
+      const body: {
+        report: AssessmentReport;
+        input: StudyPlanInput;
+        sessionId?: string;
+        distinctId?: string;
+      } = {
         report,
         input: {
           learnerName: learnerName.trim() || undefined,
@@ -97,6 +126,8 @@ export function StudyPlanWizard({ report, onClose }: Props) {
           focusStrands,
           notes: notes.trim() || undefined,
         },
+        sessionId,
+        distinctId,
       };
       const res = await fetch('/api/study-plan', {
         method: 'POST',

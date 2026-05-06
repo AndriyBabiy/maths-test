@@ -231,6 +231,37 @@ const styles = StyleSheet.create({
     marginTop: 2,
     lineHeight: 1.35,
   },
+  // "Where you slipped" callout — surfaces specific diagnostic mistakes the
+  // LLM has tied to this topic. Sits inside the topic cell so it visually
+  // belongs to the topic, not the milestone.
+  slipBlock: {
+    marginTop: 4,
+    paddingTop: 4,
+    paddingHorizontal: 6,
+    paddingBottom: 4,
+    backgroundColor: '#fef2f2',
+    borderLeftWidth: 2,
+    borderLeftColor: tok.bad,
+    borderRadius: 3,
+  },
+  slipHeading: {
+    fontSize: 7,
+    fontFamily: 'Helvetica-Bold',
+    color: tok.bad,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    marginBottom: 2,
+  },
+  slipItem: {
+    fontSize: 8,
+    color: tok.inkSecondary,
+    marginTop: 2,
+    lineHeight: 1.35,
+  },
+  slipQuestion: {
+    fontFamily: 'Helvetica-Bold',
+    color: tok.inkPrimary,
+  },
   milestone: {
     backgroundColor: tok.subtle,
     paddingVertical: 6,
@@ -650,6 +681,7 @@ export function StudyPlanPDF({ plan, report }: StudyPlanPDFProps) {
                 </View>
                 {w.topics.map((t, i) => {
                   const isLast = i === w.topics.length - 1;
+                  const slips = t.relatedIncorrectItems ?? [];
                   return (
                     <View
                       key={i}
@@ -661,6 +693,26 @@ export function StudyPlanPDF({ plan, report }: StudyPlanPDFProps) {
                         <Text style={styles.topicSub}>
                           {t.learningOutcome} · {glyphSafe(t.practiceHint)}
                         </Text>
+                        {slips.length > 0 && (
+                          <View style={styles.slipBlock}>
+                            <Text style={styles.slipHeading}>
+                              Where you slipped
+                            </Text>
+                            {slips.map((slip, j) => (
+                              <Text key={j} style={styles.slipItem}>
+                                <Text style={styles.slipQuestion}>
+                                  {glyphSafe(slip.questionText)}
+                                </Text>
+                                {' — you picked "'}
+                                {glyphSafe(slip.chosenAnswer)}
+                                {'", answer was "'}
+                                {glyphSafe(slip.correctAnswer)}
+                                {'". Trap: '}
+                                {glyphSafe(slip.trap)}
+                              </Text>
+                            ))}
+                          </View>
+                        )}
                       </View>
                       <Text style={styles.colHours}>{t.hours}</Text>
                     </View>

@@ -5,6 +5,7 @@
  * state. Engine math lives in `RaschEngine`; report-building in
  * `buildReport`. The only I/O is the LLM call inside `narrateNode`.
  */
+import type { RunnableConfig } from '@langchain/core/runnables';
 import { z } from 'zod';
 import {
   ITEMS,
@@ -14,6 +15,7 @@ import {
   type Strand,
 } from '@maths-diag/core';
 import { createLLM } from './llm';
+import { traceLLM } from '../../_lib/llm-trace';
 import {
   type AgentStateType,
   type AgentStateUpdate,
@@ -88,7 +90,13 @@ export function scoreAnswerNode(state: AgentStateType): AgentStateUpdate {
   if (!item) throw new Error(`Unknown itemId: ${last.itemId}`);
 
   const sessionState = toSessionState(state);
-  const updated = engine.update(sessionState, item, last.correct, last.latencyMs);
+  const updated = engine.update(
+    sessionState,
+    item,
+    last.correct,
+    last.latencyMs,
+    last.chosenIndex,
+  );
   const recommendation = engine.recommend(updated, item.strand);
 
   return {
@@ -101,7 +109,10 @@ const CommentarySchema = z.object({
   commentary: z.string().min(1).max(220),
 });
 
-export async function narrateNode(state: AgentStateType): Promise<AgentStateUpdate> {
+export async function narrateNode(
+  state: AgentStateType,
+  config?: RunnableConfig,
+): Promise<AgentStateUpdate> {
   const item = state.nextItem;
   // Without a next item there's nothing to narrate; let the caller decide.
   if (!item) return { commentary: '' };
@@ -121,6 +132,14 @@ export async function narrateNode(state: AgentStateType): Promise<AgentStateUpda
     `Constraints: 1 sentence, under 200 chars, encouraging tone, no exclamation overload, no spoilers.`,
   ].join('\n');
 
+  // distinctId comes through `configurable` so PostHog `$ai_generation` events
+  // join the same person record as client-side product events. Falls back to
+  // sessionId when the route handler didn't attach one.
+  const configurable = config?.configurable as
+    | { distinctId?: string }
+    | undefined;
+  const distinctId = configurable?.distinctId ?? state.sessionId;
+
   // LLM commentary is supplementary — never let an OpenRouter/key/network
   // failure block the assessment flow. Math + item picking are pure and
   // already complete by the time this node runs.
@@ -128,7 +147,20 @@ export async function narrateNode(state: AgentStateType): Promise<AgentStateUpda
     const llm = createLLM().withStructuredOutput(CommentarySchema, {
       name: 'commentary',
     });
-    const out = await llm.invoke(prompt);
+    const out = await traceLLM(llm, prompt, {
+      distinctId,
+      traceId: state.sessionId,
+      spanName: 'assessment_narrate',
+      provider: 'openrouter',
+      model: process.env.OPENROUTER_MODEL ?? 'anthropic/claude-haiku-4.5',
+      properties: {
+        assessment_session_id: state.sessionId,
+        strand: item.strand,
+        item_id: item.id,
+        item_b: item.b,
+        items_asked: asked,
+      },
+    });
     return { commentary: out.commentary };
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);

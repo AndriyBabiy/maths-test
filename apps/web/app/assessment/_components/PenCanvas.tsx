@@ -3,6 +3,8 @@
 import {
   type PointerEvent as ReactPointerEvent,
   type Ref,
+  type WheelEvent as ReactWheelEvent,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useRef,
@@ -17,6 +19,9 @@ export interface PenCanvasHandle {
   undo: () => void;
   clear: () => void;
   snapshot: () => string | undefined;
+  resetView: () => void;
+  zoomIn: () => void;
+  zoomOut: () => void;
 }
 
 interface PenCanvasProps {
@@ -27,11 +32,37 @@ interface PenCanvasProps {
   strokes: Stroke[];
   onStrokesChange?: (next: Stroke[]) => void;
   paper?: PaperKind;
+  /** Base stroke width in canvas-space px. Pressure scales 0.55× to 1.85×. */
   stroke?: number;
+  /** Solid paper colour painted under the grid. */
   paperColor?: string;
   ref?: Ref<PenCanvasHandle>;
+  /** Reports zoom changes upward so the toolbar can show a percentage. */
+  onZoomChange?: (zoom: number) => void;
 }
 
+const MIN_ZOOM = 0.25;
+const MAX_ZOOM = 4;
+
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, v));
+}
+
+/**
+ * Pressure-aware infinite drawing surface.
+ *
+ * Coordinates in `Stroke.points` are stored in **canvas-space** (i.e. before
+ * pan/zoom). The viewport is a window into the canvas plane; we render with a
+ * single `ctx.setTransform(zoom*dpr, 0, 0, zoom*dpr, panX*dpr, panY*dpr)` so
+ * strokes and the paper grid share one transform.
+ *
+ * Pointer routing:
+ *   - `pen` / `mouse` → draw (mouse pans on shift+drag or middle-button)
+ *   - `touch`         → pan (1 finger) or pinch-zoom (2 fingers); never draws
+ *
+ * This mirrors iPadOS Notes / Procreate so that a palm resting on the screen
+ * never accidentally produces strokes when the learner is using an Apple Pencil.
+ */
 export function PenCanvas({
   width,
   height,
@@ -43,10 +74,29 @@ export function PenCanvas({
   stroke = 1.6,
   paperColor = '#fdfbf3',
   ref,
+  onZoomChange,
 }: PenCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [current, setCurrent] = useState<Stroke | null>(null);
   const drawing = useRef(false);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [zoom, setZoom] = useState(1);
+
+  // Track all active touch pointers so we can detect 2-finger pinch.
+  const touches = useRef<Map<number, { x: number; y: number }>>(new Map());
+  // When pinch starts we snapshot the gesture origin so subsequent moves are
+  // computed relative to it (otherwise zoom drifts as fingers wobble).
+  const pinchStart = useRef<{
+    distance: number;
+    midX: number;
+    midY: number;
+    pan: { x: number; y: number };
+    zoom: number;
+  } | null>(null);
+  // Mouse-pan state (shift+drag or middle-button).
+  const mousePan = useRef<{ x: number; y: number } | null>(null);
+
+  useEffect(() => onZoomChange?.(zoom), [zoom, onZoomChange]);
 
   useImperativeHandle(
     ref,
@@ -54,10 +104,17 @@ export function PenCanvas({
       undo: () => onStrokesChange?.(strokes.slice(0, -1)),
       clear: () => onStrokesChange?.([]),
       snapshot: () => canvasRef.current?.toDataURL('image/png'),
+      resetView: () => {
+        setPan({ x: 0, y: 0 });
+        setZoom(1);
+      },
+      zoomIn: () => setZoom((z) => clamp(z * 1.25, MIN_ZOOM, MAX_ZOOM)),
+      zoomOut: () => setZoom((z) => clamp(z / 1.25, MIN_ZOOM, MAX_ZOOM)),
     }),
     [strokes, onStrokesChange],
   );
 
+  // Single render pass: paper fill → grid in canvas-space → all strokes.
   useEffect(() => {
     const c = canvasRef.current;
     if (!c) return;
@@ -68,49 +125,72 @@ export function PenCanvas({
     c.height = Math.max(1, height * dpr);
     c.style.width = `${width}px`;
     c.style.height = `${height}px`;
+
+    // Paint paper in viewport-space first so it covers the whole visible area
+    // regardless of pan/zoom (gives the canvas a solid base colour).
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = paperColor;
     ctx.fillRect(0, 0, width, height);
 
+    // Switch to canvas-space (origin = canvas (0,0); pan/zoom applied).
+    ctx.setTransform(zoom * dpr, 0, 0, zoom * dpr, pan.x * dpr, pan.y * dpr);
+
+    // Compute the canvas-space rect currently visible so we only draw grid
+    // lines/dots within bounds (saves draw calls when zoomed in).
+    const viewMinX = -pan.x / zoom;
+    const viewMinY = -pan.y / zoom;
+    const viewMaxX = (width - pan.x) / zoom;
+    const viewMaxY = (height - pan.y) / zoom;
+
     if (paper === 'rule') {
       ctx.strokeStyle = 'rgba(120,160,210,0.32)';
-      ctx.lineWidth = 1;
-      for (let y = 32; y < height; y += 28) {
+      ctx.lineWidth = 1 / zoom;
+      const startY = Math.floor(viewMinY / 28) * 28;
+      for (let y = startY; y < viewMaxY; y += 28) {
         ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(width, y);
+        ctx.moveTo(viewMinX, y);
+        ctx.lineTo(viewMaxX, y);
         ctx.stroke();
       }
-      ctx.strokeStyle = 'rgba(220,80,80,0.3)';
-      ctx.beginPath();
-      ctx.moveTo(48, 0);
-      ctx.lineTo(48, height);
-      ctx.stroke();
+      // Margin rule line at canvas-space x=48 (only render when in view).
+      if (viewMinX <= 48 && viewMaxX >= 48) {
+        ctx.strokeStyle = 'rgba(220,80,80,0.3)';
+        ctx.beginPath();
+        ctx.moveTo(48, viewMinY);
+        ctx.lineTo(48, viewMaxY);
+        ctx.stroke();
+      }
     } else if (paper === 'grid') {
       ctx.strokeStyle = 'rgba(120,160,210,0.22)';
-      ctx.lineWidth = 1;
-      for (let x = 24; x < width; x += 24) {
+      ctx.lineWidth = 1 / zoom;
+      const startX = Math.floor(viewMinX / 24) * 24;
+      const startY = Math.floor(viewMinY / 24) * 24;
+      for (let x = startX; x < viewMaxX; x += 24) {
         ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, height);
+        ctx.moveTo(x, viewMinY);
+        ctx.lineTo(x, viewMaxY);
         ctx.stroke();
       }
-      for (let y = 24; y < height; y += 24) {
+      for (let y = startY; y < viewMaxY; y += 24) {
         ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(width, y);
+        ctx.moveTo(viewMinX, y);
+        ctx.lineTo(viewMaxX, y);
         ctx.stroke();
       }
     } else if (paper === 'dot') {
       ctx.fillStyle = 'rgba(120,140,180,0.4)';
-      for (let x = 24; x < width; x += 24)
-        for (let y = 24; y < height; y += 24) {
+      const startX = Math.floor(viewMinX / 24) * 24;
+      const startY = Math.floor(viewMinY / 24) * 24;
+      for (let x = startX; x < viewMaxX; x += 24) {
+        for (let y = startY; y < viewMaxY; y += 24) {
           ctx.beginPath();
-          ctx.arc(x, y, 1, 0, 6.3);
+          ctx.arc(x, y, 1 / zoom, 0, 6.3);
           ctx.fill();
         }
+      }
     }
 
+    // Render committed + in-flight strokes.
     const all = current ? [...strokes, current] : strokes;
     for (const s of all) {
       if (s.tool === 'erase') continue;
@@ -133,18 +213,57 @@ export function PenCanvas({
       }
       ctx.stroke();
     }
-  }, [strokes, current, width, height, paper, paperColor, stroke]);
+  }, [strokes, current, width, height, paper, paperColor, stroke, pan, zoom]);
 
-  function pt(e: ReactPointerEvent<HTMLCanvasElement>): StrokePoint {
-    const r = canvasRef.current!.getBoundingClientRect();
-    return {
-      x: e.clientX - r.left,
-      y: e.clientY - r.top,
-      p: e.pressure > 0 ? e.pressure : 0.5,
-    };
-  }
+  /** Convert a viewport-space pointer event into a canvas-space stroke point. */
+  const pt = useCallback(
+    (e: ReactPointerEvent<HTMLCanvasElement>): StrokePoint => {
+      const r = canvasRef.current!.getBoundingClientRect();
+      const vx = e.clientX - r.left;
+      const vy = e.clientY - r.top;
+      return {
+        x: (vx - pan.x) / zoom,
+        y: (vy - pan.y) / zoom,
+        p: e.pressure > 0 ? e.pressure : 0.5,
+      };
+    },
+    [pan, zoom],
+  );
 
   function down(e: ReactPointerEvent<HTMLCanvasElement>) {
+    // Touch events go through the pan/pinch path so palm contact never produces
+    // strokes when the learner is drawing with an Apple Pencil.
+    if (e.pointerType === 'touch') {
+      touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (touches.current.size === 2) {
+        const arr = Array.from(touches.current.values());
+        const a = arr[0]!;
+        const b = arr[1]!;
+        const distance = Math.hypot(a.x - b.x, a.y - b.y);
+        const r = canvasRef.current!.getBoundingClientRect();
+        pinchStart.current = {
+          distance,
+          midX: (a.x + b.x) / 2 - r.left,
+          midY: (a.y + b.y) / 2 - r.top,
+          pan,
+          zoom,
+        };
+        // Abort any half-finished stroke if a second finger lands.
+        drawing.current = false;
+        setCurrent(null);
+      }
+      return;
+    }
+
+    // Mouse: shift+drag or middle button = pan.
+    if (e.pointerType === 'mouse' && (e.shiftKey || e.button === 1)) {
+      e.preventDefault();
+      canvasRef.current?.setPointerCapture(e.pointerId);
+      mousePan.current = { x: e.clientX, y: e.clientY };
+      return;
+    }
+
+    // Pen / mouse-primary: draw.
     e.preventDefault();
     canvasRef.current?.setPointerCapture(e.pointerId);
     drawing.current = true;
@@ -157,19 +276,79 @@ export function PenCanvas({
   }
 
   function move(e: ReactPointerEvent<HTMLCanvasElement>) {
+    // Touch path: pan or pinch.
+    if (e.pointerType === 'touch') {
+      if (!touches.current.has(e.pointerId)) return;
+      const prev = touches.current.get(e.pointerId)!;
+      touches.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      if (touches.current.size >= 2 && pinchStart.current) {
+        // Two-finger pinch: zoom around the original midpoint, also pan to
+        // keep that midpoint anchored under the fingers.
+        const arr = Array.from(touches.current.values());
+        const a = arr[0]!;
+        const b = arr[1]!;
+        const distance = Math.hypot(a.x - b.x, a.y - b.y);
+        const newZoom = clamp(
+          pinchStart.current.zoom * (distance / pinchStart.current.distance),
+          MIN_ZOOM,
+          MAX_ZOOM,
+        );
+        const ratio = newZoom / pinchStart.current.zoom;
+        // The canvas-space point that started under the midpoint must stay
+        // there: newPan = mid - (mid - oldPan) * ratio
+        setZoom(newZoom);
+        setPan({
+          x:
+            pinchStart.current.midX -
+            (pinchStart.current.midX - pinchStart.current.pan.x) * ratio,
+          y:
+            pinchStart.current.midY -
+            (pinchStart.current.midY - pinchStart.current.pan.y) * ratio,
+        });
+      } else if (touches.current.size === 1) {
+        // Single-finger pan.
+        const dx = e.clientX - prev.x;
+        const dy = e.clientY - prev.y;
+        setPan((p) => ({ x: p.x + dx, y: p.y + dy }));
+      }
+      return;
+    }
+
+    // Mouse pan in progress.
+    if (mousePan.current) {
+      const dx = e.clientX - mousePan.current.x;
+      const dy = e.clientY - mousePan.current.y;
+      mousePan.current = { x: e.clientX, y: e.clientY };
+      setPan((p) => ({ x: p.x + dx, y: p.y + dy }));
+      return;
+    }
+
     if (!drawing.current) return;
     const p = pt(e);
     setCurrent((c) => (c ? { ...c, points: [...c.points, p] } : c));
     if (tool === 'erase') {
+      // Eraser hit-test in canvas-space; threshold scales inversely with zoom
+      // so the eraser feels the same size visually at any zoom level.
+      const r = 16 / zoom;
       onStrokesChange?.(
         strokes.filter(
-          (s) => !s.points.some((q) => Math.hypot(q.x - p.x, q.y - p.y) < 16),
+          (s) => !s.points.some((q) => Math.hypot(q.x - p.x, q.y - p.y) < r),
         ),
       );
     }
   }
 
-  function up() {
+  function up(e: ReactPointerEvent<HTMLCanvasElement>) {
+    if (e.pointerType === 'touch') {
+      touches.current.delete(e.pointerId);
+      if (touches.current.size < 2) pinchStart.current = null;
+      return;
+    }
+    if (mousePan.current) {
+      mousePan.current = null;
+      return;
+    }
     if (!drawing.current) return;
     drawing.current = false;
     setCurrent((c) => {
@@ -180,6 +359,25 @@ export function PenCanvas({
     });
   }
 
+  function onWheel(e: ReactWheelEvent<HTMLCanvasElement>) {
+    if (e.ctrlKey || e.metaKey) {
+      // Cursor-anchored zoom (matches Figma / Miro / Notion canvas).
+      const r = canvasRef.current!.getBoundingClientRect();
+      const vx = e.clientX - r.left;
+      const vy = e.clientY - r.top;
+      const factor = Math.exp(-e.deltaY * 0.002);
+      const newZoom = clamp(zoom * factor, MIN_ZOOM, MAX_ZOOM);
+      const ratio = newZoom / zoom;
+      setZoom(newZoom);
+      setPan({
+        x: vx - (vx - pan.x) * ratio,
+        y: vy - (vy - pan.y) * ratio,
+      });
+    } else {
+      setPan((p) => ({ x: p.x - e.deltaX, y: p.y - e.deltaY }));
+    }
+  }
+
   return (
     <canvas
       ref={canvasRef}
@@ -187,12 +385,18 @@ export function PenCanvas({
         touchAction: 'none',
         cursor: tool === 'erase' ? 'cell' : 'crosshair',
         display: 'block',
+        // Block iOS native text-selection callout (Copy/Look Up) that Apple
+        // Pencil hover-tap can otherwise trigger near interactive UI chrome.
+        userSelect: 'none',
+        WebkitUserSelect: 'none',
+        WebkitTouchCallout: 'none',
       }}
       onPointerDown={down}
       onPointerMove={move}
       onPointerUp={up}
       onPointerCancel={up}
       onPointerLeave={up}
+      onWheel={onWheel}
     />
   );
 }
@@ -204,7 +408,9 @@ interface PenCanvasAutoProps {
   onStrokesChange?: (next: Stroke[]) => void;
   paper?: PaperKind;
   paperColor?: string;
+  stroke?: number;
   canvasRef?: Ref<PenCanvasHandle>;
+  onZoomChange?: (zoom: number) => void;
 }
 
 export function PenCanvasAuto({
@@ -214,7 +420,9 @@ export function PenCanvasAuto({
   onStrokesChange,
   paper,
   paperColor,
+  stroke,
   canvasRef,
+  onZoomChange,
 }: PenCanvasAutoProps) {
   const wrap = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
@@ -222,7 +430,6 @@ export function PenCanvasAuto({
   useEffect(() => {
     const el = wrap.current;
     if (!el) return;
-    // Set initial size synchronously so canvas mounts on first paint.
     const r = el.getBoundingClientRect();
     if (r.width > 0 && r.height > 0) setSize({ w: r.width, h: r.height });
     const ro = new ResizeObserver(([e]) => {
@@ -235,7 +442,16 @@ export function PenCanvasAuto({
   }, []);
 
   return (
-    <div ref={wrap} style={{ position: 'absolute', inset: 0 }}>
+    <div
+      ref={wrap}
+      style={{
+        position: 'absolute',
+        inset: 0,
+        userSelect: 'none',
+        WebkitUserSelect: 'none',
+        WebkitTouchCallout: 'none',
+      }}
+    >
       {size.w > 0 && size.h > 0 && (
         <PenCanvas
           ref={canvasRef}
@@ -247,6 +463,8 @@ export function PenCanvasAuto({
           onStrokesChange={onStrokesChange}
           paper={paper}
           paperColor={paperColor}
+          stroke={stroke}
+          onZoomChange={onZoomChange}
         />
       )}
     </div>

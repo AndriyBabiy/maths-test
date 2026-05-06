@@ -19,6 +19,7 @@ import {
   type StudyPlan,
   type StudyPlanInput,
 } from '@maths-diag/core';
+import { traceLLM } from '../../_lib/llm-trace';
 
 /**
  * Local LLM factory with JSON response_format pinned via modelKwargs.
@@ -94,6 +95,13 @@ function normalizeLLMPlan(raw: unknown, priorities: StrandPriority[]): unknown {
   return raw;
 }
 
+const IncorrectItemRecapSchema = z.object({
+  questionText: z.string().min(3).max(400),
+  chosenAnswer: z.string().min(1).max(200),
+  correctAnswer: z.string().min(1).max(200),
+  trap: z.string().min(5).max(220),
+});
+
 /** Zod schema mirrors the StudyTopic / StudyWeek interfaces in core. */
 const TopicSchema = z.object({
   strand: z.enum([
@@ -109,6 +117,12 @@ const TopicSchema = z.object({
   rationale: z.string().min(10).max(200),
   hours: z.number().min(0.25).max(20),
   practiceHint: z.string().min(5).max(220),
+  /**
+   * Optional pointer back to specific diagnostic mistakes this topic addresses.
+   * Capped at 3 to keep the PDF readable. Omitted when the LLM has nothing
+   * concrete to attach (e.g. generic practice weeks).
+   */
+  relatedIncorrectItems: z.array(IncorrectItemRecapSchema).max(3).optional(),
 });
 
 const WeekSchema = z.object({
@@ -200,6 +214,28 @@ function buildPrompt(
     for (const s of report.strengths) lines.push(`  - ${s}`);
   }
 
+  // Concrete misconceptions: feed up to 8 wrong attempts so the LLM can attach
+  // specific recaps to whichever weekly topic best covers the underlying skill.
+  // Cap at 8 to keep the prompt budget predictable; the rest of the wrong
+  // answers are still reflected in `report.gaps` aggregated by LO.
+  const wrong = report.attempts.filter((a) => !a.correct).slice(0, 8);
+  if (wrong.length > 0) {
+    lines.push(
+      '',
+      '## Specific questions the learner got wrong',
+      'Use these to populate `relatedIncorrectItems` on whichever topic best covers the underlying skill.',
+      'Each entry below shows: strand · LO · question text · chosen vs correct option.',
+    );
+    for (const a of wrong) {
+      const chosen =
+        a.chosenIndex === null ? '(no answer)' : a.choices[a.chosenIndex];
+      const correct = a.choices[a.correctIndex];
+      lines.push(
+        `  - [${a.strand}] ${a.learningOutcome} · "${a.text}" · picked: "${chosen}" · correct: "${correct}"`,
+      );
+    }
+  }
+
   lines.push(
     '',
     '## Constraints',
@@ -217,6 +253,7 @@ function buildPrompt(
     '- milestone is a measurable checkpoint ("80% on Khan unit X", "complete one full Paper 2").',
     '- summary is one paragraph (≤800 chars) speaking directly to the learner.',
     '- Caveats: optional 0-3 short notes (e.g. "exam in 2 weeks: skip new content").',
+    '- relatedIncorrectItems: when wrong-question entries are listed above, attach 1–3 of them to the topic whose skill they exercise. Use the literal `questionText`, `chosenAnswer`, and `correctAnswer` strings; write a one-sentence `trap` describing the misconception (e.g. "treated x^2 as 2x"). Omit the field on topics with no relevant wrong items.',
   );
   return lines.join('\n');
 }
@@ -225,6 +262,7 @@ function buildPrompt(
 export async function buildStudyPlan(
   report: AssessmentReport,
   input: StudyPlanInput,
+  tracing?: { distinctId: string; traceId?: string },
 ): Promise<StudyPlan> {
   const totalWeeks = weeksUntil(input.targetDate);
   const priorities = computeStrandPriorities(report, input);
@@ -246,13 +284,38 @@ export async function buildStudyPlan(
       '    "startDate": "YYYY-MM-DD",\n' +
       '    "endDate": "YYYY-MM-DD",\n' +
       '    "theme": string,\n' +
-      '    "topics": [{ "strand": string, "learningOutcome": string, "title": string, "rationale": string, "hours": number, "practiceHint": string }],\n' +
+      '    "topics": [{\n' +
+      '      "strand": string,\n' +
+      '      "learningOutcome": string,\n' +
+      '      "title": string,\n' +
+      '      "rationale": string,\n' +
+      '      "hours": number,\n' +
+      '      "practiceHint": string,\n' +
+      '      "relatedIncorrectItems"?: [{ "questionText": string, "chosenAnswer": string, "correctAnswer": string, "trap": string }]\n' +
+      '    }],\n' +
       '    "milestone": string\n' +
       '  }],\n' +
       '  "summary": string,\n' +
       '  "caveats": string[]\n' +
       '}';
-    const message = await llm.invoke(prompt + jsonInstruction);
+    const fullPrompt = prompt + jsonInstruction;
+    // PostHog $ai_generation tracing — only when caller passed identity.
+    // Avoids capturing telemetry under a synthetic distinctId for offline /
+    // CLI invocations of this agent.
+    const message = tracing
+      ? await traceLLM(llm, fullPrompt, {
+          distinctId: tracing.distinctId,
+          traceId: tracing.traceId,
+          spanName: 'study_plan_generate',
+          provider: 'openrouter',
+          model: process.env.OPENROUTER_MODEL ?? 'anthropic/claude-haiku-4.5',
+          properties: {
+            total_weeks: totalWeeks,
+            goal_tier: input.goalTier,
+            weekly_hours: input.weeklyHours,
+          },
+        })
+      : await llm.invoke(fullPrompt);
     const raw = typeof message.content === 'string'
       ? message.content
       : JSON.stringify(message.content);

@@ -1,6 +1,6 @@
 'use client';
 
-import { type CSSProperties, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import {
   color,
   font,
@@ -71,24 +71,19 @@ const PAPER_LABEL: Record<PaperKind, string> = {
   dot: 'Dot',
 };
 
-function paperBackground(kind: PaperKind): CSSProperties {
-  if (kind === 'rule') {
-    return {
-      backgroundImage: `repeating-linear-gradient(to bottom, transparent 0, transparent 31px, ${color.border.subtle} 31px, ${color.border.subtle} 32px)`,
-    };
-  }
-  if (kind === 'grid') {
-    return {
-      backgroundImage: `linear-gradient(${color.border.subtle} 1px, transparent 1px), linear-gradient(90deg, ${color.border.subtle} 1px, transparent 1px)`,
-      backgroundSize: '24px 24px',
-    };
-  }
-  return {
-    backgroundImage: `radial-gradient(circle, ${color.border.default} 1px, transparent 1px)`,
-    backgroundSize: '20px 20px',
-    backgroundPosition: '10px 10px',
-  };
-}
+/**
+ * Stroke-width presets for the Thin/Medium/Thick toggle. The PenCanvas applies
+ * pressure scaling on top of these (0.55× to 1.85×), so the visible weight
+ * ranges roughly:
+ *   Thin   → ~0.45–1.5 px
+ *   Medium → ~0.9–3.0 px
+ *   Thick  → ~1.8–6.0 px
+ */
+const STROKE_WIDTHS = [
+  { value: 0.8, label: 'Thin', dot: 4 },
+  { value: 1.6, label: 'Medium', dot: 7 },
+  { value: 3.2, label: 'Thick', dot: 11 },
+] as const;
 
 export function WorkingsPane({
   activeQ,
@@ -104,6 +99,8 @@ export function WorkingsPane({
   pending,
 }: WorkingsPaneProps) {
   const [tool, setTool] = useState<CanvasTool>('pen');
+  const [strokeWidth, setStrokeWidth] = useState<number>(1.6);
+  const [zoom, setZoom] = useState<number>(1);
   const canvasRef = useRef<PenCanvasHandle | null>(null);
 
   const isDone = activeQ.state === 'done';
@@ -254,7 +251,9 @@ export function WorkingsPane({
         </div>
       )}
 
-      {/* Tools row */}
+      {/* Tools row — chrome around the canvas. The user-select/touch-callout
+          properties block iOS Safari from popping the native Copy/Look-Up menu
+          when an Apple Pencil hovers over these buttons. */}
       <div
         style={{
           display: 'flex',
@@ -263,6 +262,9 @@ export function WorkingsPane({
           padding: `${space[4]}px 0`,
           borderTop: `1px solid ${color.border.subtle}`,
           flexWrap: 'wrap',
+          userSelect: 'none',
+          WebkitUserSelect: 'none',
+          WebkitTouchCallout: 'none',
         }}
       >
         <SketchBtn
@@ -297,6 +299,66 @@ export function WorkingsPane({
           <span>Undo</span>
         </SketchBtn>
 
+        {/* Stroke-width selector */}
+        <div
+          role="radiogroup"
+          aria-label="Stroke width"
+          style={{
+            display: 'flex',
+            gap: space[2],
+            alignItems: 'center',
+            paddingLeft: space[3],
+            marginLeft: space[2],
+            borderLeft: `1px solid ${color.border.subtle}`,
+            height: 30,
+          }}
+        >
+          {STROKE_WIDTHS.map((w) => {
+            const selected = strokeWidth === w.value;
+            return (
+              <button
+                key={w.value}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                aria-label={`${w.label} stroke`}
+                title={`${w.label} stroke`}
+                onClick={() => setStrokeWidth(w.value)}
+                style={{
+                  width: 28,
+                  height: 24,
+                  borderRadius: radius.sm,
+                  background: selected
+                    ? color.accent.primarySoft
+                    : color.bg.surface,
+                  border: `1px solid ${
+                    selected ? color.accent.primaryEdge : color.border.default
+                  }`,
+                  padding: 0,
+                  cursor: 'pointer',
+                  flexShrink: 0,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  transition: `background ${motionTokens.fast}, border-color ${motionTokens.fast}`,
+                }}
+              >
+                <span
+                  aria-hidden
+                  style={{
+                    width: w.dot,
+                    height: w.dot,
+                    borderRadius: '50%',
+                    background: penColor,
+                    display: 'inline-block',
+                  }}
+                />
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Pen colour selector */}
         <div
           role="radiogroup"
           aria-label="Pen color"
@@ -342,6 +404,64 @@ export function WorkingsPane({
 
         <div style={{ flex: 1 }} />
 
+        {/* Zoom controls */}
+        <div
+          style={{
+            display: 'flex',
+            gap: space[2],
+            alignItems: 'center',
+            paddingRight: space[3],
+            marginRight: space[2],
+            borderRight: `1px solid ${color.border.subtle}`,
+            height: 30,
+          }}
+        >
+          <SketchBtn
+            small
+            variant="ghost"
+            ariaLabel="Zoom out"
+            title="Zoom out"
+            onClick={() => canvasRef.current?.zoomOut()}
+          >
+            <span aria-hidden style={{ fontSize: 16, lineHeight: 1 }}>
+              −
+            </span>
+          </SketchBtn>
+          <button
+            type="button"
+            onClick={() => canvasRef.current?.resetView()}
+            title="Reset view (100%)"
+            aria-label="Reset view to 100%"
+            style={{
+              minWidth: 52,
+              height: 24,
+              padding: `0 ${space[2]}px`,
+              borderRadius: radius.sm,
+              border: `1px solid ${color.border.default}`,
+              background: color.bg.surface,
+              cursor: 'pointer',
+              fontFamily: font.sans,
+              fontSize: fontSize.tiny,
+              fontWeight: fontWeight.medium,
+              color: color.ink.secondary,
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            {Math.round(zoom * 100)}%
+          </button>
+          <SketchBtn
+            small
+            variant="ghost"
+            ariaLabel="Zoom in"
+            title="Zoom in"
+            onClick={() => canvasRef.current?.zoomIn()}
+          >
+            <span aria-hidden style={{ fontSize: 16, lineHeight: 1 }}>
+              +
+            </span>
+          </SketchBtn>
+        </div>
+
         <SketchBtn
           small
           variant="ghost"
@@ -367,7 +487,9 @@ export function WorkingsPane({
         </SketchBtn>
       </div>
 
-      {/* Canvas */}
+      {/* Canvas. The grid/dots/rule pattern is now drawn inside the canvas
+          (in canvas-space) so it pans/zooms with strokes. The wrapper no
+          longer paints a CSS background pattern. */}
       <div
         style={{
           flex: 1,
@@ -378,7 +500,9 @@ export function WorkingsPane({
           borderRadius: radius.lg,
           overflow: 'hidden',
           boxShadow: shadow.xs,
-          ...paperBackground(paper),
+          userSelect: 'none',
+          WebkitUserSelect: 'none',
+          WebkitTouchCallout: 'none',
         }}
       >
         <PenCanvasAuto
@@ -388,7 +512,9 @@ export function WorkingsPane({
           strokes={strokes}
           onStrokesChange={setStrokes}
           paper={paper}
-          paperColor="transparent"
+          paperColor="#fdfbf3"
+          stroke={strokeWidth}
+          onZoomChange={setZoom}
         />
       </div>
     </div>

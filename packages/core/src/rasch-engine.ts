@@ -54,6 +54,7 @@ export class RaschEngine {
     item: Item,
     correct: boolean,
     latencyMs: number = 0,
+    chosenIndex?: 0 | 1 | 2 | 3,
   ): SessionState {
     const strand = item.strand;
 
@@ -77,7 +78,7 @@ export class RaschEngine {
     const newSe: Record<Strand, number> = { ...state.se, [strand]: seNew };
     const newHistory = [
       ...state.history,
-      { itemId: item.id, correct, latencyMs },
+      { itemId: item.id, correct, latencyMs, chosenIndex },
     ];
     const newItemsAsked = new Set(state.itemsAsked);
     newItemsAsked.add(item.id);

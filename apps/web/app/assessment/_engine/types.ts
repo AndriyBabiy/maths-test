@@ -62,6 +62,13 @@ export interface AssessResult {
   advanceTo: string;
   correct: boolean | null;
   inserted: string[];
+  /**
+   * Mirrors `progress.cap` from the assessment route — the diagnostic's hard
+   * upper bound on questions. Threaded through so the chat header can render
+   * a stable denominator (e.g. `Q 4 / 20`) instead of `visibleItems.length`,
+   * which equals the numerator on every render.
+   */
+  cap?: number;
   /** Set when the backend says the assessment is complete. Caller should switch views. */
   report?: import('@/app/api/assessment/types').AssessmentReport;
 }

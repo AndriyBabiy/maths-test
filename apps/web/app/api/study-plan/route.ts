@@ -10,6 +10,7 @@
 import { type NextRequest, NextResponse } from 'next/server';
 import type { AssessmentReport, StudyPlanInput } from '@maths-diag/core';
 import { clientIp, rateLimit } from '../_lib/rate-limit';
+import { capture } from '../_lib/posthog-server';
 import { buildStudyPlan } from './_agent';
 
 export const dynamic = 'force-dynamic';
@@ -30,6 +31,10 @@ const VALID_STRANDS = new Set([
 interface ParsedBody {
   report: AssessmentReport;
   input: StudyPlanInput;
+  /** Optional analytics passthrough — `distinct_id` from posthog-js. */
+  distinctId?: string;
+  /** Optional analytics passthrough — assessment session correlation. */
+  sessionId?: string;
 }
 
 function parseBody(raw: unknown): { ok: true; value: ParsedBody } | { ok: false; error: string } {
@@ -73,6 +78,11 @@ function parseBody(raw: unknown): { ok: true; value: ParsedBody } | { ok: false;
   const notes =
     typeof input.notes === 'string' && input.notes.length <= 500 ? input.notes : undefined;
 
+  const distinctId =
+    typeof r.distinctId === 'string' && r.distinctId ? r.distinctId : undefined;
+  const sessionId =
+    typeof r.sessionId === 'string' && r.sessionId ? r.sessionId : undefined;
+
   return {
     ok: true,
     value: {
@@ -85,6 +95,8 @@ function parseBody(raw: unknown): { ok: true; value: ParsedBody } | { ok: false;
         focusStrands,
         notes,
       },
+      distinctId,
+      sessionId,
     },
   };
 }
@@ -109,12 +121,48 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   if (!parsed.ok) {
     return NextResponse.json({ error: parsed.error }, { status: 400 });
   }
+  const phDistinctId =
+    parsed.value.distinctId ?? parsed.value.sessionId ?? `ip:${ip}`;
+
+  capture({
+    distinctId: phDistinctId,
+    event: 'study_plan_requested',
+    properties: {
+      assessment_session_id: parsed.value.sessionId,
+      goal_tier: parsed.value.input.goalTier,
+      weekly_hours: parsed.value.input.weeklyHours,
+      target_date: parsed.value.input.targetDate,
+      focus_strands_count: parsed.value.input.focusStrands.length,
+    },
+  });
+
   try {
-    const plan = await buildStudyPlan(parsed.value.report, parsed.value.input);
+    const plan = await buildStudyPlan(parsed.value.report, parsed.value.input, {
+      distinctId: phDistinctId,
+      traceId: parsed.value.sessionId,
+    });
+    capture({
+      distinctId: phDistinctId,
+      event: 'study_plan_generated',
+      properties: {
+        assessment_session_id: parsed.value.sessionId,
+        total_weeks: plan.totalWeeks,
+        total_hours: plan.totalHours,
+        goal_tier: parsed.value.input.goalTier,
+      },
+    });
     return NextResponse.json({ plan });
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     console.error('[study-plan] generation failed:', detail);
+    capture({
+      distinctId: phDistinctId,
+      event: 'study_plan_failed',
+      properties: {
+        assessment_session_id: parsed.value.sessionId,
+        error: detail,
+      },
+    });
     return NextResponse.json(
       { error: 'study plan generation failed', detail },
       { status: 500 },

@@ -12,8 +12,14 @@ import { answerGraph, finaliseGraph, startGraph } from './graph';
 import * as store from './session-store';
 import { fromSessionState, toSessionState, type AgentStateUpdate } from './state';
 
-const RUN_CONFIG = (sessionId: string) => ({
-  configurable: { thread_id: sessionId },
+const RUN_CONFIG = (sessionId: string, distinctId?: string) => ({
+  configurable: {
+    thread_id: sessionId,
+    // Forwarded into `narrateNode` so its `$ai_generation` PostHog events
+    // attach to the same person as the browser-side product events. When
+    // analytics isn't bootstrapped the node falls back to `sessionId`.
+    distinctId,
+  },
 });
 
 /** Synchronise the canonical session-store with whatever the graph returned. */
@@ -43,12 +49,15 @@ export interface StartResult {
   commentary: string;
 }
 
-export async function startAssessment(sessionId: string): Promise<StartResult> {
+export async function startAssessment(
+  sessionId: string,
+  distinctId?: string,
+): Promise<StartResult> {
   // Reset the session — `start` always begins from a clean slate.
   const fresh = store.init(sessionId);
   const seed: AgentStateUpdate = fromSessionState(fresh);
 
-  const result = await startGraph.invoke(seed, RUN_CONFIG(sessionId));
+  const result = await startGraph.invoke(seed, RUN_CONFIG(sessionId, distinctId));
   if (!result.nextItem) {
     throw new Error('start: no item could be picked from the bank');
   }
@@ -69,6 +78,7 @@ export interface AnswerArgs {
   itemId: string;
   chosenIndex: 0 | 1 | 2 | 3;
   latencyMs: number;
+  distinctId?: string;
 }
 
 export async function answerAssessment(args: AnswerArgs): Promise<AnswerResult> {
@@ -98,7 +108,10 @@ export async function answerAssessment(args: AnswerArgs): Promise<AnswerResult> 
     commentary: '',
   };
 
-  const result = await answerGraph.invoke(seed, RUN_CONFIG(args.sessionId));
+  const result = await answerGraph.invoke(
+    seed,
+    RUN_CONFIG(args.sessionId, args.distinctId),
+  );
   persistFromGraphState(args.sessionId, result);
 
   if (result.report) {
@@ -114,7 +127,7 @@ export async function answerAssessment(args: AnswerArgs): Promise<AnswerResult> 
     // Bank exhausted but no report produced — finalise as a fallback.
     // The fallback drops the just-scored boolean (finaliseAssessment doesn't
     // know about it), so re-attach `correct` from this turn here.
-    const finalised = await finaliseAssessment(args.sessionId);
+    const finalised = await finaliseAssessment(args.sessionId, args.distinctId);
     return { kind: 'report', ...finalised, lastCorrect: correct };
   }
 
@@ -138,13 +151,17 @@ export interface FinaliseResult {
 
 export async function finaliseAssessment(
   sessionId: string,
+  distinctId?: string,
 ): Promise<FinaliseResult> {
   const current = store.get(sessionId);
   if (!current) {
     throw new Error(`Unknown sessionId: ${sessionId}`);
   }
   const seed: AgentStateUpdate = fromSessionState(current);
-  const result = await finaliseGraph.invoke(seed, RUN_CONFIG(sessionId));
+  const result = await finaliseGraph.invoke(
+    seed,
+    RUN_CONFIG(sessionId, distinctId),
+  );
   persistFromGraphState(sessionId, result);
   if (!result.report) {
     throw new Error('finalise: graph did not produce a report');

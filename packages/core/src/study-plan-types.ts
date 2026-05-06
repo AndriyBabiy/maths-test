@@ -27,6 +27,23 @@ export interface StudyPlanInput {
   notes?: string;
 }
 
+/**
+ * Specific diagnostic mistakes the learner made that this study topic should
+ * address. Lets the plan PDF show "Where you slipped" callouts under the
+ * topic that best covers the underlying skill, so remediation is concrete
+ * rather than abstract.
+ */
+export interface IncorrectItemRecap {
+  /** Question prompt as shown during the diagnostic. */
+  questionText: string;
+  /** The option the learner picked (verbatim choice text). */
+  chosenAnswer: string;
+  /** The correct option (verbatim choice text). */
+  correctAnswer: string;
+  /** One-sentence description of the misconception or trap. */
+  trap: string;
+}
+
 /** A single learning outcome the learner should cover during a study block. */
 export interface StudyTopic {
   strand: Strand;
@@ -43,6 +60,12 @@ export interface StudyTopic {
    * Free-form so the LLM can suggest Khan Academy / past papers.
    */
   practiceHint: string;
+  /**
+   * Optional: specific diagnostic questions the learner got wrong that this
+   * topic remediates. Empty/omitted when the topic is general practice or the
+   * learner answered no relevant items incorrectly.
+   */
+  relatedIncorrectItems?: IncorrectItemRecap[];
 }
 
 /** A single week in the plan. */

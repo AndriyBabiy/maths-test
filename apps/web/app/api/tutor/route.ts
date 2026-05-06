@@ -12,6 +12,8 @@ import { type NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { createLLM } from '../assessment/_agent/llm';
 import { clientIp, rateLimit } from '../_lib/rate-limit';
+import { traceLLM } from '../_lib/llm-trace';
+import { capture } from '../_lib/posthog-server';
 import type {
   TutorQuestion,
   TutorRequest,
@@ -94,6 +96,9 @@ function parseTutorRequest(
   const sessionId = typeof r.sessionId === 'string' ? r.sessionId : '';
   if (!sessionId) return { ok: false, error: 'sessionId required' };
 
+  const distinctId =
+    typeof r.distinctId === 'string' && r.distinctId ? r.distinctId : undefined;
+
   const message = typeof r.message === 'string' ? r.message.trim() : '';
   if (!message) return { ok: false, error: 'message required' };
   if (message.length > MESSAGE_MAX_CHARS) {
@@ -114,6 +119,7 @@ function parseTutorRequest(
     ok: true,
     value: {
       sessionId,
+      distinctId,
       question: question as TutorQuestion | null,
       history,
       message,
@@ -204,13 +210,59 @@ export async function POST(req: NextRequest): Promise<Response> {
     );
   }
 
+  // distinctId from the browser is preferred; fall back to sessionId so
+  // events still attach to a stable person — even if PostHog isn't bootstrapped
+  // on the client (e.g. ad-blocker), we won't lose server-side telemetry.
+  const phDistinctId = body.distinctId ?? body.sessionId;
+
+  capture({
+    distinctId: phDistinctId,
+    event: 'tutor_message_sent',
+    properties: {
+      assessment_session_id: body.sessionId,
+      message_length: body.message.length,
+      has_question: body.question !== null,
+      strand: body.question?.strand,
+      learning_outcome: body.question?.learningOutcome,
+      history_turns: body.history.length,
+    },
+  });
+
   try {
     const llm = createLLM().withStructuredOutput(ReplySchema, { name: 'reply' });
-    const out = await llm.invoke(buildPrompt(body));
+    const out = await traceLLM(llm, buildPrompt(body), {
+      distinctId: phDistinctId,
+      traceId: body.sessionId,
+      spanName: 'tutor_reply',
+      provider: 'openrouter',
+      model: process.env.OPENROUTER_MODEL ?? 'anthropic/claude-haiku-4.5',
+      properties: {
+        assessment_session_id: body.sessionId,
+        strand: body.question?.strand,
+        learning_outcome: body.question?.learningOutcome,
+      },
+    });
+    capture({
+      distinctId: phDistinctId,
+      event: 'tutor_reply_received',
+      properties: {
+        assessment_session_id: body.sessionId,
+        reply_length: out.reply.length,
+        strand: body.question?.strand,
+      },
+    });
     return jsonResponse({ kind: 'reply', text: out.reply });
   } catch (err) {
     const detail = err instanceof Error ? err.message : 'unknown error';
     console.error('[tutor] LLM call failed', detail);
+    capture({
+      distinctId: phDistinctId,
+      event: 'tutor_reply_failed',
+      properties: {
+        assessment_session_id: body.sessionId,
+        error: detail,
+      },
+    });
     return jsonResponse(
       {
         kind: 'error',
