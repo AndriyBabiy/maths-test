@@ -17,6 +17,12 @@ export type Strand =
 
 export type Tier = 'foundation' | 'ordinary' | 'higher';
 
+export type EducationLevel =
+  | 'foundations'
+  | 'junior_cert'
+  | 'leaving_cert'
+  | 'university';
+
 export interface Item {
   id: string;
   stage: Stage;
@@ -68,7 +74,17 @@ export interface AssessmentReport {
  * the assessment to function.
  */
 export type AssessmentRequest =
-  | { kind: 'start'; sessionId: string; distinctId?: string }
+  | {
+      kind: 'start';
+      sessionId: string;
+      distinctId?: string;
+      /**
+       * Self-reported level from the pre-assessment picker. Omitted = legacy
+       * adaptive-probe behavior (the existing stage-router decides stage from
+       * the first 1-2 answers). Present = seed stage + initial theta directly.
+       */
+      educationLevel?: EducationLevel;
+    }
   | {
       kind: 'answer';
       sessionId: string;

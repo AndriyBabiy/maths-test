@@ -11,9 +11,24 @@ import { capture } from '../_lib/posthog-server';
 import type {
   AssessmentRequest,
   AssessmentResponse,
+  EducationLevel,
   Item,
   PublicItem,
 } from './types';
+
+const EDUCATION_LEVELS: readonly EducationLevel[] = [
+  'foundations',
+  'junior_cert',
+  'leaving_cert',
+  'university',
+] as const;
+
+function isEducationLevel(value: unknown): value is EducationLevel {
+  return (
+    typeof value === 'string' &&
+    (EDUCATION_LEVELS as readonly string[]).includes(value)
+  );
+}
 import {
   answerAssessment,
   finaliseAssessment,
@@ -45,7 +60,20 @@ function parseAssessmentRequest(
     typeof r.distinctId === 'string' && r.distinctId ? r.distinctId : undefined;
 
   if (r.kind === 'start') {
-    return { ok: true, value: { kind: 'start', sessionId, distinctId } };
+    let educationLevel: EducationLevel | undefined;
+    if (r.educationLevel !== undefined && r.educationLevel !== null) {
+      if (!isEducationLevel(r.educationLevel)) {
+        return {
+          ok: false,
+          error: `educationLevel must be one of ${EDUCATION_LEVELS.join(', ')}`,
+        };
+      }
+      educationLevel = r.educationLevel;
+    }
+    return {
+      ok: true,
+      value: { kind: 'start', sessionId, distinctId, educationLevel },
+    };
   }
   if (r.kind === 'finalise') {
     return { ok: true, value: { kind: 'finalise', sessionId, distinctId } };
@@ -122,11 +150,20 @@ export async function POST(req: NextRequest): Promise<Response> {
       capture({
         distinctId: phDistinctId,
         event: 'assessment_started',
-        properties: { assessment_session_id: body.sessionId },
+        properties: {
+          assessment_session_id: body.sessionId,
+          // Self-reported level seeded into the session at start. `null` when
+          // the learner skipped the picker (legacy adaptive-probe flow). All
+          // subsequent events in this session share the same sessionId, so
+          // downstream analysis can join them back to this property without
+          // re-attaching it to every event.
+          education_level: body.educationLevel ?? null,
+        },
       });
       const { item, asked, commentary } = await startAssessment(
         body.sessionId,
         body.distinctId,
+        body.educationLevel,
       );
       return NextResponse.json<AssessmentResponse>({
         kind: 'next_item',

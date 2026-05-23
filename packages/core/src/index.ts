@@ -2,6 +2,7 @@ export type {
   Stage,
   Strand,
   Tier,
+  EducationLevel,
   Item,
   SessionState,
   AssessmentReport,

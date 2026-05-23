@@ -6,7 +6,7 @@
  * Map is the source of truth for the SessionState we feed in; we read from it
  * before invoking and write back the checkpoint result afterwards.
  */
-import type { AssessmentReport, Item } from '@maths-diag/core';
+import type { AssessmentReport, EducationLevel, Item } from '@maths-diag/core';
 import { ITEMS } from '@maths-diag/core';
 import { answerGraph, finaliseGraph, startGraph } from './graph';
 import * as store from './session-store';
@@ -52,9 +52,13 @@ export interface StartResult {
 export async function startAssessment(
   sessionId: string,
   distinctId?: string,
+  educationLevel?: EducationLevel,
 ): Promise<StartResult> {
-  // Reset the session — `start` always begins from a clean slate.
-  const fresh = store.init(sessionId);
+  // Reset the session — `start` always begins from a clean slate. When the
+  // learner has self-reported a level, seed stage + initial theta from it so
+  // the very first item lands in the right difficulty band; otherwise fall
+  // back to the legacy cold-start state and let `stage-router` probe.
+  const fresh = store.init(sessionId, educationLevel);
   const seed: AgentStateUpdate = fromSessionState(fresh);
 
   const result = await startGraph.invoke(seed, RUN_CONFIG(sessionId, distinctId));

@@ -10,6 +10,20 @@ export type Strand =
 
 export type Tier = 'foundation' | 'ordinary' | 'higher';
 
+/**
+ * Self-reported education level captured at the start of the assessment.
+ * Seeds initial theta and (when content covers it) constrains the stage
+ * pool, so a Junior Cert student doesn't open with Leaving Cert items.
+ *
+ * Distinct from `Stage` because `Stage` is the system-managed pool selector
+ * and `EducationLevel` is the user's own claim — the two can diverge.
+ */
+export type EducationLevel =
+  | 'foundations'
+  | 'junior_cert'
+  | 'leaving_cert'
+  | 'university';
+
 export interface Item {
   id: string;
   stage: Stage;

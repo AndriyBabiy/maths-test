@@ -14,6 +14,7 @@
 import posthog from 'posthog-js';
 import type {
   AssessmentResponse,
+  EducationLevel,
   PublicItem,
 } from '@/app/api/assessment/types';
 import type { TutorRequest, TutorResponse } from '@/app/api/tutor/types';
@@ -54,11 +55,15 @@ async function postAssessment(body: unknown): Promise<AssessmentResponse> {
   }
 }
 
-export function apiStart(sessionId: string): Promise<AssessmentResponse> {
+export function apiStart(
+  sessionId: string,
+  educationLevel?: EducationLevel,
+): Promise<AssessmentResponse> {
   return postAssessment({
     kind: 'start',
     sessionId,
     distinctId: getDistinctId(),
+    educationLevel,
   });
 }
 

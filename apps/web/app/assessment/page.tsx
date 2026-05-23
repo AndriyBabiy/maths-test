@@ -1,9 +1,13 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { AssessmentReport } from '@/app/api/assessment/types';
+import type {
+  AssessmentReport,
+  EducationLevel,
+} from '@/app/api/assessment/types';
 import { ChatPane } from './_components/ChatPane';
 import { ContentsSidebar } from './_components/ContentsSidebar';
+import { LevelPicker } from './_components/LevelPicker';
 import { MobileTabs, type AssessmentTab } from './_components/MobileTabs';
 import { StudyPlanWizard } from './_components/study-plan/StudyPlanWizard';
 import {
@@ -113,7 +117,7 @@ export default function AssessmentPage() {
   const [activeId, setActiveId] = useState<string>('');
   const [chat, setChat] = useState<ChatMessage[]>(INTRO_CHAT);
   const [ribbon, setRibbon] = useState<{ text: string; mood: Mood } | null>({
-    text: 'starting up…',
+    text: 'pick your level to begin',
     mood: 'warn',
   });
   const [tutorMood, setTutorMood] = useState<Mood>('think');
@@ -124,7 +128,15 @@ export default function AssessmentPage() {
     mood: Mood;
   } | null>(null);
   const [streak, setStreak] = useState(0);
-  const [pending, setPending] = useState(true);
+  // Starts false so the LevelPicker is interactive at mount. Flips to true
+  // inside `startAssessment` once the learner picks a level and the agent
+  // begins loading the first question.
+  const [pending, setPending] = useState(false);
+  // Self-reported education level. `null` until the learner picks one from
+  // the LevelPicker, at which point we fire `startAssessment` with it.
+  const [educationLevel, setEducationLevel] = useState<EducationLevel | null>(
+    null,
+  );
   const [report, setReport] = useState<AssessmentReport | null>(null);
   const [studyPlanOpen, setStudyPlanOpen] = useState(false);
   const [startedAt, setStartedAt] = useState<number | null>(null);
@@ -214,59 +226,64 @@ export default function AssessmentPage() {
     if (!isBelowDesktop) setDrawerOpen(false);
   }, [isBelowDesktop]);
 
-  const startAssessment = useCallback(async (sid: string) => {
-    setPending(true);
-    setRibbon({ text: 'starting up…', mood: 'warn' });
-    setTutorMood('think');
-    const response = await apiStart(sid);
-    if (response.kind === 'error') {
+  const startAssessment = useCallback(
+    async (sid: string, level: EducationLevel) => {
+      setPending(true);
+      setRibbon({ text: 'starting up…', mood: 'warn' });
+      setTutorMood('think');
+      const response = await apiStart(sid, level);
+      if (response.kind === 'error') {
+        setChat((c) => [
+          ...c,
+          {
+            who: 'tutor',
+            text: "I can't reach the tutor right now. Please try Reset in a moment.",
+            mood: 'bad',
+          },
+        ]);
+        setRibbon({ text: 'agent unavailable', mood: 'bad' });
+        setTutorMood('sad');
+        setPending(false);
+        return;
+      }
+      if (response.kind !== 'next_item') {
+        setChat((c) => [
+          ...c,
+          {
+            who: 'tutor',
+            text: "Got an unexpected response from the agent — expected a question, didn't get one.",
+            mood: 'warn',
+          },
+        ]);
+        setPending(false);
+        return;
+      }
+      const firstQ = publicItemToQuestion(response.item, 'now');
+      setItems([firstQ]);
+      setActiveId(firstQ.id);
+      setStartedAt(Date.now());
+      setTotalCap(response.progress.cap);
       setChat((c) => [
         ...c,
         {
           who: 'tutor',
-          text: "I can't reach the tutor right now. Please try Reset in a moment.",
-          mood: 'bad',
+          text: response.progress.commentary || "Let's start with this one.",
         },
       ]);
-      setRibbon({ text: 'agent unavailable', mood: 'bad' });
-      setTutorMood('sad');
+      setRibbon({ text: 'pick A/B/C/D when ready', mood: 'warn' });
+      setTutorMood('think');
       setPending(false);
-      return;
-    }
-    if (response.kind !== 'next_item') {
-      setChat((c) => [
-        ...c,
-        {
-          who: 'tutor',
-          text: "Got an unexpected response from the agent — expected a question, didn't get one.",
-          mood: 'warn',
-        },
-      ]);
-      setPending(false);
-      return;
-    }
-    const firstQ = publicItemToQuestion(response.item, 'now');
-    setItems([firstQ]);
-    setActiveId(firstQ.id);
-    setStartedAt(Date.now());
-    setTotalCap(response.progress.cap);
-    setChat((c) => [
-      ...c,
-      {
-        who: 'tutor',
-        text: response.progress.commentary || "Let's start with this one.",
-      },
-    ]);
-    setRibbon({ text: 'pick A/B/C/D when ready', mood: 'warn' });
-    setTutorMood('think');
-    setPending(false);
-  }, []);
+    },
+    [],
+  );
 
-  // Boot the session once on mount.
-  useEffect(() => {
-    void startAssessment(sessionId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const handleLevelPick = useCallback(
+    (level: EducationLevel) => {
+      setEducationLevel(level);
+      void startAssessment(sessionId, level);
+    },
+    [sessionId, startAssessment],
+  );
 
   function pickQuestion(id: string) {
     setActiveId(id);
@@ -410,13 +427,17 @@ export default function AssessmentPage() {
     setItems(buildInitialState());
     setActiveId('');
     setChat(INTRO_CHAT);
-    setRibbon({ text: 'starting up…', mood: 'warn' });
+    setRibbon({ text: 'pick your level to begin', mood: 'warn' });
     setTutorMood('think');
     setStreak(0);
     setReport(null);
     setStartedAt(null);
     setHintLevels({});
-    void startAssessment(sid);
+    setPending(false);
+    // Clear the level so the LevelPicker reappears — `startAssessment` will
+    // fire again the moment the learner picks. Clean slate matches what reset
+    // means everywhere else.
+    setEducationLevel(null);
   }
 
   return (
@@ -610,6 +631,8 @@ export default function AssessmentPage() {
                 mobileFocus={mobileFocus}
                 touchDraws={isPhone}
               />
+            ) : educationLevel === null ? (
+              <LevelPicker onPick={handleLevelPick} disabled={pending} />
             ) : (
               <WorkingsPlaceholder pending={pending} ribbon={ribbon} />
             )}
